@@ -3,7 +3,7 @@ from google import genai
 from google.genai import types
 
 class MeetingAssistantCore:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key):
         # Inicializamos el cliente oficial de Gemini
         self.client = genai.Client(api_key=api_key)
         # Usamos gemini-2.5-flash por su velocidad y bajo costo para tiempo real
