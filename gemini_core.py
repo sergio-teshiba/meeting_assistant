@@ -1,59 +1,48 @@
 import os
 from google import genai
-from google.genai import types
+from google.genai import errors
 
-class MeetingAssistantCore:
-    def __init__(self, api_key):
-        # Inicializamos el cliente oficial de Gemini
+class GeminiAssistant:
+    def __init__(self, api_key: str):
+        """
+        Inicializa el cliente de Gemini utilizando la librería oficial moderna 'google-genai'.
+        """
+        if not api_key:
+            raise ValueError("Se requiere una API Key válida de Gemini.")
+        
+        # Inicialización limpia y robusta del cliente oficial
         self.client = genai.Client(api_key=api_key)
-        # Usamos gemini-2.5-flash por su velocidad y bajo costo para tiempo real
-        self.model_name = 'gemini-1.5-flash'
+        # Usamos el modelo estándar más estable de la familia Flash
+        self.model_name = "gemini-1.5-flash"
 
     def process_exhibition_mode(self, user_speech: str, documents_context: str, search_levels: dict) -> str:
         """
-        Modo Exposición: El usuario habla y el agente busca apoyo según los checkboxes activos.
+        Procesa el modo exposición de forma robusta y segura ante errores de cliente.
         """
-        prompt = f"""
-        Estás asistiendo a un ponente en tiempo real. 
-        Lo que acaba de decir es: "{user_speech}"
-        
-        Niveles de búsqueda activos:
-        - Nivel 1 (Documentos Fuentes): {'ACTIVO' if search_levels.get('level_1') else 'INACTIVO'}
-        - Nivel 2 (Conocimiento Base IA): {'ACTIVO' if search_levels.get('level_2') else 'INACTIVO'}
-        - Nivel 3 (Búsqueda Web): {'ACTIVO' if search_levels.get('level_3') else 'INACTIVO'}
+        try:
+            prompt = f"""
+            Estás asistiendo a un ponente en tiempo real. 
+            Lo que acaba de decir es: "{user_speech}"
+            
+            Niveles de búsqueda activos:
+            - Nivel 1 (Documentos Fuentes): {'ACTIVO' if search_levels.get('level_1') else 'INACTIVO'}
+            - Nivel 2 (Conocimiento Base IA): {'ACTIVO' if search_levels.get('level_2') else 'INACTIVO'}
+            - Nivel 3 (Búsqueda Web): {'ACTIVO' if search_levels.get('level_3') else 'INACTIVO'}
 
-        Contexto de documentos fuentes cargados:
-        {documents_context if search_levels.get('level_1') else 'No disponible por configuración.'}
+            Contexto de documentos fuentes cargados:
+            {documents_context if search_levels.get('level_1') else 'No disponible por configuración.'}
 
-        Genera de forma muy concisa y en viñetas (bullet points) datos duros, estadísticas o argumentos clave de apoyo que el ponente pueda proyectar o mencionar inmediatamente para enriquecer su discurso.
-        """
-        
-        # Llamada limpia y directa compatible con la nueva librería google-genai
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt
-        )
-        
-        return response.text
-
-    def process_listening_mode(self, interlocutor_speech: str, speaker_name: str, role: str) -> dict:
-        """
-        Modo Escucha: Analiza lo que dicen los demás, detecta riesgos bajo marco profesional y áreas de oportunidad.
-        """
-        prompt = f"""
-        Estás operando en Modo Escucha para un profesional en un entorno de {role}.
-        La persona '{speaker_name}' acaba de decir: "{interlocutor_speech}"
-
-        Analiza la intervención y devuelve estrictamente un análisis estructurado con:
-        1. **Resumen clave:** Lo más importante en 1 línea.
-        2. **Área de oportunidad / Propuesta de mejora:** Dónde se puede aportar valor o sumar a la idea.
-        3. **Detección de riesgos:** Posibles inconsistencias, objeciones o puntos críticos (estrictamente bajo un marco profesional, asertivo y diplomático).
-        4. **Sugerencia de respuesta:** Qué puede responder o sugerir nuestro usuario.
-        5. **Alerta Crítica (Sí/No):** Indica si esto requiere una interrupción urgente (destello en pantalla).
-        """
-
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt
-        )
-        return {"analysis": response.text}
+            Genera de forma muy concisa y en viñetas (bullet points) datos duros, estadísticas o argumentos clave de apoyo que el ponente pueda proyectar o mencionar inmediatamente para enriquecer su discurso.
+            """
+            
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            
+            return response.text
+            
+        except errors.ClientError as e:
+            return f"⚠️ Error de autenticación o parámetros de la API de Gemini (ClientError): Verifique que su API Key sea correcta y tenga permisos activos. (Detalle: {str(e)})"
+        except Exception as e:
+            return f"⚠️ Ocurrió un error inesperado al procesar con Gemini: {str(e)}"
