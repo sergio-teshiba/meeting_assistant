@@ -7,7 +7,7 @@ class MeetingAssistantCore:
         # Inicializamos el cliente oficial de Gemini
         self.client = genai.Client(api_key=api_key)
         # Usamos gemini-2.5-flash por su velocidad y bajo costo para tiempo real
-        self.model_name = 'gemini-2.5-flash'
+        self.model_name = 'gemini-1.5-flash'
 
     def process_exhibition_mode(self, user_speech: str, documents_context: str, search_levels: dict) -> str:
         """
