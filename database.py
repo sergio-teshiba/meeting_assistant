@@ -3,16 +3,26 @@ import streamlit as st
 from supabase import create_client, Client
 
 def init_supabase() -> Client:
-    """Inicializa el cliente de Supabase de manera segura leyendo los secretos de Streamlit."""
+    """Inicializa el cliente de Supabase buscando los secretos de forma flexible."""
     try:
-        # Verificación explícita para evitar errores crípticos de st.secrets
-        if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
+        url = None
+        key = None
+        
+        # Intento 1: Buscar claves a nivel raíz (formato plano)
+        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
+            url = str(st.secrets["SUPABASE_URL"]).strip()
+            key = str(st.secrets["SUPABASE_KEY"]).strip()
+        
+        # Intento 2: Buscar dentro de una sección [supabase] (formato agrupado)
+        elif "supabase" in st.secrets:
+            url = str(st.secrets["supabase"].get("SUPABASE_URL", "")).strip()
+            key = str(st.secrets["supabase"].get("SUPABASE_KEY", "")).strip()
+            
+        if not url or not key:
             st.error("⚠️ Faltan las variables SUPABASE_URL o SUPABASE_KEY en los Secrets de Streamlit Cloud.")
+            st.info("Asegúrate de ir a Settings > Secrets en tu panel de Streamlit Cloud y verificar que estén escritas correctamente.")
             st.stop()
             
-        url = str(st.secrets["SUPABASE_URL"]).strip()
-        key = str(st.secrets["SUPABASE_KEY"]).strip()
-        
         return create_client(url, key)
     except Exception as e:
         st.error(f"❌ Error crítico al inicializar Supabase: {str(e)}")
