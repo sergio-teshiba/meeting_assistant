@@ -18,27 +18,22 @@ class MeetingAssistantCore:
         Lo que acaba de decir es: "{user_speech}"
         
         Niveles de búsqueda activos:
-        - Nivel 1 (Documentos Fuentes): {'ACTIVO' if search_levels['level_1'] else 'INACTIVO'}
-        - Nivel 2 (Conocimiento Base IA): {'ACTIVO' if search_levels['level_2'] else 'INACTIVO'}
-        - Nivel 3 (Búsqueda Web): {'ACTIVO' if search_levels['level_3'] else 'INACTIVO'}
+        - Nivel 1 (Documentos Fuentes): {'ACTIVO' if search_levels.get('level_1') else 'INACTIVO'}
+        - Nivel 2 (Conocimiento Base IA): {'ACTIVO' if search_levels.get('level_2') else 'INACTIVO'}
+        - Nivel 3 (Búsqueda Web): {'ACTIVO' if search_levels.get('level_3') else 'INACTIVO'}
 
         Contexto de documentos fuentes cargados:
-        {documents_context if search_levels['level_1'] else 'No disponible por configuración.'}
+        {documents_context if search_levels.get('level_1') else 'No disponible por configuración.'}
 
         Genera de forma muy concisa y en viñetas (bullet points) datos duros, estadísticas o argumentos clave de apoyo que el ponente pueda proyectar o mencionar inmediatamente para enriquecer su discurso.
         """
         
-        config = types.GenerateContentConfig(
-            temperature=0.3,
-            # Si el nivel 3 está activo, habilitamos Google Search como herramienta
-            tools=[{"google_search": {}}] if search_levels['level_3'] else None
-        )
-
+        # Llamada limpia y directa compatible con la nueva librería google-genai
         response = self.client.models.generate_content(
             model=self.model_name,
-            contents=prompt,
-            config=config
+            contents=prompt
         )
+        
         return response.text
 
     def process_listening_mode(self, interlocutor_speech: str, speaker_name: str, role: str) -> dict:
