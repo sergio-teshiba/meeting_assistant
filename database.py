@@ -3,25 +3,27 @@ import streamlit as st
 from supabase import create_client, Client
 
 def init_supabase() -> Client:
-    """Inicializa el cliente de Supabase buscando los secretos de forma flexible."""
+    """Inicializa el cliente de Supabase con soporte flexible de secretos y depuración."""
     try:
         url = None
         key = None
         
-        # Intento 1: Buscar claves a nivel raíz (formato plano)
+        # Intento 1: Formato plano (SUPABASE_URL y SUPABASE_KEY en la raíz)
         if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
             url = str(st.secrets["SUPABASE_URL"]).strip()
             key = str(st.secrets["SUPABASE_KEY"]).strip()
         
-        # Intento 2: Buscar dentro de una sección [supabase] (formato agrupado)
+        # Intento 2: Formato agrupado ([supabase])
         elif "supabase" in st.secrets:
             url = str(st.secrets["supabase"].get("SUPABASE_URL", "")).strip()
             key = str(st.secrets["supabase"].get("SUPABASE_KEY", "")).strip()
             
         if not url or not key:
             st.error("⚠️ Faltan las variables SUPABASE_URL o SUPABASE_KEY en los Secrets de Streamlit Cloud.")
-            st.info("Asegúrate de ir a Settings > Secrets en tu panel de Streamlit Cloud y verificar que estén escritas correctamente.")
             st.stop()
+            
+        # Depuración visual en la barra lateral para verificar qué URL está leyendo la nube
+        st.sidebar.caption(f"DEBUG URL: [{url}]")
             
         return create_client(url, key)
     except Exception as e:
