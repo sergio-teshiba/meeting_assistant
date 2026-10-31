@@ -1,129 +1,74 @@
 import streamlit as st
-import time
-from gemini_core import MeetingAssistantCore
+from gemini_core import GeminiAssistant
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Asistente Inteligente de Reuniones",
+    page_title="Asistente Web de Reuniones",
     page_icon="🎙️",
     layout="wide"
 )
 
-# Estilo CSS para el efecto visual de "Flash" (Alerta de 2 segundos)
-st.markdown("""
-<style>
-@keyframes flash-border {
-    0% { border: 4px solid rgba(255, 75, 75, 0); background-color: rgba(255, 75, 75, 0); }
-    50% { border: 4px solid rgba(255, 75, 75, 1); background-color: rgba(255, 75, 75, 0.15); }
-    100% { border: 4px solid rgba(255, 75, 75, 0); background-color: rgba(255, 75, 75, 0); }
+st.title("🎙️ Asistente Web de Reuniones y Exposiciones")
+st.markdown("Herramienta en la nube para asistencia en tiempo real con inteligencia artificial.")
+
+# --- BARRA LATERAL (CONFIGURACIÓN Y API KEY) ---
+st.sidebar.header("⚙️ Configuración")
+api_key_input = st.sidebar.text_input("🔑 Ingresa tu Gemini API Key", type="password")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎛️ Niveles de Búsqueda")
+search_levels = {
+    'level_1': st.sidebar.checkbox("Nivel 1: Documentos Fuentes", value=True),
+    'level_2': st.sidebar.checkbox("Nivel 2: Conocimiento Base IA", value=True),
+    'level_3': st.sidebar.checkbox("Nivel 3: Búsqueda Web", value=False)
 }
-.alert-flash {
-    animation: flash-border 2s ease-in-out;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-}
-</style>
-""", unsafe_allow_html=True)
 
-st.title("🎙️ Asistente de Reuniones y Exposiciones en Tiempo Real")
-st.write("Tu copiloto inteligente con análisis estratégico, RAG documental y detección de riesgos profesionales.")
-
-# --- BARRA LATERAL: CONFIGURACIÓN Y PARÁMETROS ---
-st.sidebar.header("⚙️ Panel de Control")
-
-# 1. API Key de Gemini
-api_key_input = st.sidebar.text_input("Ingresa tu Gemini API Key", type="password")
-
-# 2. Selector de Escenario / Ámbito
-escenario = st.sidebar.selectbox(
-    "Selecciona el Escenario:",
-    [
-        "Docencia / Clases Universitarias",
-        "Reunión de Negocios / Ejecutiva",
-        "Desarrollo de Proyectos (ej. Desert Pong)",
-        "Consultoría / Diagnóstico de Empresa",
-        "Personal / Social"
-    ]
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Documentos de Contexto")
+uploaded_files = st.sidebar.file_uploader(
+    "Sube tus archivos de apoyo (TXT, PDF, etc.)", 
+    accept_multiple_files=True,
+    type=["txt", "pdf", "md"]
 )
 
-# 3. Selector de Modo de Operación
-modo_operacion = st.sidebar.radio(
-    "Modo de Operación Actual:",
-    ["Modo Exposición (Tú hablas)", "Modo Escucha (Escuchas a otros)"]
-)
-
-st.sidebar.divider()
-
-# 4. Alcance de Búsqueda (Checkboxes)
-st.sidebar.subheader("Alcance de Búsqueda (RAG)")
-level_1 = st.sidebar.checkbox("Nivel 1: Documentos Fuentes Propios", value=True)
-level_2 = st.sidebar.checkbox("Nivel 2: Conocimiento General de IA", value=True)
-level_3 = st.sidebar.checkbox("Nivel 3: Búsqueda Web en Tiempo Real", value=False)
-
-search_levels = {"level_1": level_1, "level_2": level_2, "level_3": level_3}
-
-st.sidebar.divider()
-
-# 5. Carga de Documentos Fuentes (Nivel 1)
-st.sidebar.subheader("📁 Documentos Fuentes")
-uploaded_files = st.sidebar.file_uploader("Sube tus PDFs, normativas o notas", accept_multiple_files=True, type=["pdf", "txt", "docx"])
-
+# Procesar texto de los documentos cargados
 documents_text_corpus = ""
 if uploaded_files:
-    for file in uploaded_files:
-        documents_text_corpus += f"\n--- Archivo: {file.name} ---\n"
-        if file.type == "text/plain":
-            documents_text_corpus += file.getvalue().decode("utf-8")
-        else:
-            documents_text_corpus += "[Contenido de documento cargado y disponible para consulta]\n"
-    st.sidebar.success(f"{len(uploaded_files)} documento(s) listo(s) en memoria.")
+    for uploaded_file in uploaded_files:
+        try:
+            content = uploaded_file.read().decode("utf-8", errors="ignore")
+            documents_text_corpus += f"\n--- Archivo: {uploaded_file.name} ---\n{content}\n"
+        except Exception:
+            pass
 
-# --- CUERPO PRINCIPAL DE LA APLICACIÓN ---
-if not api_key_input:
-    st.warning("⚠️ Por favor, ingresa tu API Key de Gemini en la barra lateral para iniciar el agente.")
-else:
-    assistant = MeetingAssistantCore(api_key=api_key_input)
+# --- INTERFAZ PRINCIPAL ---
+st.markdown("### 💬 Modo Exposición / Reunión en Vivo")
+user_speech = st.text_area(
+    "Escribe o pega lo que se está discutiendo en la exposición o reunión:",
+    placeholder="Ej: Estamos discutiendo la viabilidad financiera del proyecto y los costos de operación para el próximo trimestre...",
+    height=150
+)
 
-    if modo_operacion == "Modo Exposición (Tú hablas)":
-        st.subheader("📢 Modo Exposición Activo")
-        st.info("Escribe o simula lo que estás exponiendo para recibir apoyos visuales instantáneos en pantalla.")
-        
-        user_speech = st.text_area("Texto de tu exposición actual:")
-        
-        if st.button("Obtener Datos de Apoyo"):
-            if user_speech.strip():
-                with st.spinner("Buscando argumentos y datos de respaldo..."):
-                    result = assistant.process_exhibition_mode(user_speech, documents_text_corpus, search_levels)
-                    st.markdown("### 📊 Datos y Viñetas de Apoyo para Proyectar:")
-                    st.write(result)
-            else:
-                st.warning("Escribe algo en tu exposición primero.")
-
+if st.button("🚀 Consultar Asistente de Apoyo", type="primary"):
+    if not api_key_input:
+        st.warning("⚠️ Por favor, ingresa tu API Key de Gemini en la barra lateral izquierda para continuar.")
+    elif not user_speech.strip():
+        st.warning("⚠️ Por favor, escribe algún texto en el área de exposición para que el asistente pueda analizarlo.")
     else:
-        st.subheader("👂 Modo Escucha Activo")
-        st.info("El agente está analizando la intervención de los demás participantes.")
-
-        # Simulación de mapeo de voces
-        col1, col2 = st.columns(2)
-        with col1:
-            speaker_name = st.text_input("Nombre o Rol del Interlocutor (ej. Director de Finanzas, Alumno Juan):", value="Interlocutor 1")
-        with col2:
-            interlocutor_speech = st.text_area("Lo que acaba de decir:")
-
-        if st.button("Analizar Intervención"):
-            if interlocutor_speech.strip():
-                with st.spinner("Analizando propuesta, riesgos y áreas de oportunidad..."):
-                    analysis_result = assistant.process_listening_mode(interlocutor_speech, speaker_name, escenario)
-                    
-                    # Simulamos la alerta de destello (Flash)
-                    st.markdown("""
-                    <div class="alert-flash">
-                        🚨 <strong>¡Alerta del Agente!</strong> Se ha detectado un punto crítico o propuesta relevante.
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown("### 📑 Análisis Estratégico en Tiempo Real:")
-                    st.markdown(analysis_result["analysis"])
-            else:
-                st.warning("Ingresa la intervención del interlocutor.")
+        try:
+            with st.spinner("Conectando con el motor de Gemini y generando argumentos de apoyo..."):
+                # Inicializar el asistente de forma segura
+                assistant = GeminiAssistant(api_key=api_key_input)
+                
+                # Ejecutar la consulta
+                result = assistant.process_exhibition_mode(
+                    user_speech=user_speech,
+                    documents_context=documents_text_corpus,
+                    search_levels=search_levels
+                )
+                
+            st.markdown("### 💡 Respuesta y Datos Clave:")
+            st.markdown(result)
+            
+        except Exception as e:
+            st.error(f"❌ Error al inicializar el asistente: {str(e)}")
