@@ -2,11 +2,21 @@ import hashlib
 import streamlit as st
 from supabase import create_client, Client
 
-@st.cache_resource
 def init_supabase() -> Client:
-    url = st.secrets["SUPABASE_URL"].strip()
-    key = st.secrets["SUPABASE_KEY"].strip()
-    return create_client(url, key)
+    """Inicializa el cliente de Supabase de manera segura leyendo los secretos de Streamlit."""
+    try:
+        # Verificación explícita para evitar errores crípticos de st.secrets
+        if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
+            st.error("⚠️ Faltan las variables SUPABASE_URL o SUPABASE_KEY en los Secrets de Streamlit Cloud.")
+            st.stop()
+            
+        url = str(st.secrets["SUPABASE_URL"]).strip()
+        key = str(st.secrets["SUPABASE_KEY"]).strip()
+        
+        return create_client(url, key)
+    except Exception as e:
+        st.error(f"❌ Error crítico al inicializar Supabase: {str(e)}")
+        st.stop()
 
 def hash_password(password: str) -> str:
     """Encripta la contraseña con SHA-256."""
@@ -30,10 +40,10 @@ def register_user_by_admin(username: str, password: str, is_admin: bool = False)
         }).execute()
         return True, f"Usuario '{clean_user}' creado exitosamente."
     except Exception as e:
-        return False, f"Error de conexión con la base de datos: {str(e)}"
+        return False, f"Error en la base de datos: {str(e)}"
 
 def authenticate_user(username: str, password: str) -> tuple[bool, dict]:
-    """Valida las credenciales con manejo de errores de red."""
+    """Valida las credenciales con manejo seguro de excepciones."""
     try:
         supabase = init_supabase()
         clean_user = username.lower().strip()
@@ -49,7 +59,7 @@ def authenticate_user(username: str, password: str) -> tuple[bool, dict]:
             }
         return False, {}
     except Exception as e:
-        st.error(f"⚠️ Error al conectar con Supabase: {str(e)}")
+        st.error(f"⚠️ Error de conexión con Supabase: {str(e)}")
         return False, {}
 
 def update_user_api_key(username: str, api_key: str):
