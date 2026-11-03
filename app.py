@@ -127,5 +127,3 @@ else:
                     st.markdown(analysis_result["analysis"])
             else:
                 st.warning("Ingresa la intervención del interlocutor.")
-
-<FollowUp label="¿Quieres que generemos el archivo audio_handler.py para conectar el micrófono en tiempo real?" query="Crea el archivo audio_handler.py para integrar la captura de voz y transcripción automática." />
