@@ -1,129 +1,90 @@
 import streamlit as st
-import time
-from gemini_core import MeetingAssistantCore
+from supabase import create_client, Client
+import os
 
-# Configuración de la página
-st.set_page_config(
-    page_title="Asistente Inteligente de Reuniones",
-    page_icon="🎙️",
-    layout="wide"
-)
+# Configuración de Supabase (puedes usar tus secretos o definir tus variables)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "TU_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "TU_SUPABASE_KEY")
 
-# Estilo CSS para el efecto visual de "Flash" (Alerta de 2 segundos)
-st.markdown("""
-<style>
-@keyframes flash-border {
-    0% { border: 4px solid rgba(255, 75, 75, 0); background-color: rgba(255, 75, 75, 0); }
-    50% { border: 4px solid rgba(255, 75, 75, 1); background-color: rgba(255, 75, 75, 0.15); }
-    100% { border: 4px solid rgba(255, 75, 75, 0); background-color: rgba(255, 75, 75, 0); }
-}
-.alert-flash {
-    animation: flash-border 2s ease-in-out;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-}
-</style>
-""", unsafe_allow_html=True)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.title("🎙️ Asistente de Reuniones y Exposiciones en Tiempo Real")
-st.write("Tu copiloto inteligente con análisis estratégico, RAG documental y detección de riesgos profesionales.")
+st.title("Asistente de Reuniones con Gemini")
 
-# --- BARRA LATERAL: CONFIGURACIÓN Y PARÁMETROS ---
-st.sidebar.header("⚙️ Panel de Control")
+# Inicializar estados de sesión
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = ""
+if "gemini_api_key" not in st.session_state:
+    st.session_state["gemini_api_key"] = ""
 
-# 1. API Key de Gemini
-api_key_input = st.sidebar.text_input("Ingresa tu Gemini API Key", type="password")
-
-# 2. Selector de Escenario / Ámbito
-escenario = st.sidebar.selectbox(
-    "Selecciona el Escenario:",
-    [
-        "Docencia / Clases Universitarias",
-        "Reunión de Negocios / Ejecutiva",
-        "Desarrollo de Proyectos (ej. Desert Pong)",
-        "Consultoría / Diagnóstico de Empresa",
-        "Personal / Social"
-    ]
-)
-
-# 3. Selector de Modo de Operación
-modo_operacion = st.sidebar.radio(
-    "Modo de Operación Actual:",
-    ["Modo Exposición (Tú hablas)", "Modo Escucha (Escuchas a otros)"]
-)
-
-st.sidebar.divider()
-
-# 4. Alcance de Búsqueda (Checkboxes)
-st.sidebar.subheader("Alcance de Búsqueda (RAG)")
-level_1 = st.sidebar.checkbox("Nivel 1: Documentos Fuentes Propios", value=True)
-level_2 = st.sidebar.checkbox("Nivel 2: Conocimiento General de IA", value=True)
-level_3 = st.sidebar.checkbox("Nivel 3: Búsqueda Web en Tiempo Real", value=False)
-
-search_levels = {"level_1": level_1, "level_2": level_2, "level_3": level_3}
-
-st.sidebar.divider()
-
-# 5. Carga de Documentos Fuentes (Nivel 1)
-st.sidebar.subheader("📁 Documentos Fuentes")
-uploaded_files = st.sidebar.file_uploader("Sube tus PDFs, normativas o notas", accept_multiple_files=True, type=["pdf", "txt", "docx"])
-
-documents_text_corpus = ""
-if uploaded_files:
-    for file in uploaded_files:
-        documents_text_corpus += f"\n--- Archivo: {file.name} ---\n"
-        if file.type == "text/plain":
-            documents_text_corpus += file.getvalue().decode("utf-8")
+# Función para verificar o crear usuario en Supabase automáticamente
+def handle_auth(email, password):
+    try:
+        # Intentar buscar si el usuario ya existe
+        response = supabase.table("users").select("*").eq("email", email).execute()
+        
+        if response.data:
+            user = response.data[0]
+            if user["password"] == password:
+                st.session_state["authenticated"] = True
+                st.session_state["user_email"] = user["email"]
+                st.session_state["gemini_api_key"] = user.get("gemini_api_key", "") or ""
+                st.success("¡Inicio de sesión exitoso!")
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
         else:
-            documents_text_corpus += "[Contenido de documento cargado y disponible para consulta]\n"
-    st.sidebar.success(f"{len(uploaded_files)} documento(s) listo(s) en memoria.")
+            # Si el usuario no existe, lo creamos automáticamente en Supabase
+            new_user = {
+                "email": email,
+                "password": password,
+                "gemini_api_key": ""
+            }
+            supabase.table("users").insert(new_user).execute()
+            st.session_state["authenticated"] = True
+            st.session_state["user_email"] = email
+            st.session_state["gemini_api_key"] = ""
+            st.success("¡Cuenta creada e iniciada con éxito!")
+            st.rerun()
+    except Exception as e:
+        st.error(f"Error en la base de datos (asegúrate de que la tabla 'users' exista en Supabase): {e}")
 
-# --- CUERPO PRINCIPAL DE LA APLICACIÓN ---
-if not api_key_input:
-    st.warning("⚠️ Por favor, ingresa tu API Key de Gemini en la barra lateral para iniciar el agente.")
+# Pantalla de Login / Registro si no está autenticado
+if not st.session_state["authenticated"]:
+    st.subheader("Iniciar Sesión / Registrarse")
+    email_input = st.text_input("Correo electrónico")
+    password_input = st.text_input("Contraseña", type="password")
+    
+    if st.button("Acceder"):
+        if email_input and password_input:
+            handle_auth(email_input, password_input)
+        else:
+                    st.warning("Por favor ingresa correo y contraseña.")
 else:
-    assistant = MeetingAssistantCore(api_key=api_key_input)
+    # Zona principal de la aplicación una vez autenticado
+    st.sidebar.write(f"Conectado como: **{st.session_state['user_email']}**")
+    
+    # Gestión de la API Key persistente
+    current_key = st.session_state.get("gemini_api_key", "")
+    api_key_input = st.sidebar.text_input("API Key de Gemini", value=current_key, type="password")
+    
+    if st.sidebar.button("Guardar API Key"):
+        try:
+            supabase.table("users").update({"gemini_api_key": api_key_input}).eq("email", st.session_state["user_email"]).execute()
+            st.session_state["gemini_api_key"] = api_key_input
+            st.sidebar.success("¡API Key guardada en la base de datos!")
+        except Exception as e:
+            st.sidebar.error(f"No se pudo guardar: {e}")
 
-    if modo_operacion == "Modo Exposición (Tú hablas)":
-        st.subheader("📢 Modo Exposición Activo")
-        st.info("Escribe o simula lo que estás exponiendo para recibir apoyos visuales instantáneos en pantalla.")
-        
-        user_speech = st.text_area("Texto de tu exposición actual:")
-        
-        if st.button("Obtener Datos de Apoyo"):
-            if user_speech.strip():
-                with st.spinner("Buscando argumentos y datos de respaldo..."):
-                    result = assistant.process_exhibition_mode(user_speech, documents_text_corpus, search_levels)
-                    st.markdown("### 📊 Datos y Viñetas de Apoyo para Proyectar:")
-                    st.write(result)
-            else:
-                st.warning("Escribe algo en tu exposición primero.")
-
+    if not st.session_state["gemini_api_key"]:
+        st.warning("⚠️ Por favor guarda tu API Key de Gemini en la barra lateral para comenzar a utilizar las funciones de la IA.")
     else:
-        st.subheader("👂 Modo Escucha Activo")
-        st.info("El agente está analizando la intervención de los demás participantes.")
-
-        # Simulación de mapeo de voces
-        col1, col2 = st.columns(2)
-        with col1:
-            speaker_name = st.text_input("Nombre o Rol del Interlocutor (ej. Director de Finanzas, Alumno Juan):", value="Interlocutor 1")
-        with col2:
-            interlocutor_speech = st.text_area("Lo que acaba de decir:")
-
-        if st.button("Analizar Intervención"):
-            if interlocutor_speech.strip():
-                with st.spinner("Analizando propuesta, riesgos y áreas de oportunidad..."):
-                    analysis_result = assistant.process_listening_mode(interlocutor_speech, speaker_name, escenario)
-                    
-                    # Simulamos la alerta de destello (Flash)
-                    st.markdown("""
-                    <div class="alert-flash">
-                        🚨 <strong>¡Alerta del Agente!</strong> Se ha detectado un punto crítico o propuesta relevante.
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown("### 📑 Análisis Estratégico en Tiempo Real:")
-                    st.markdown(analysis_result["analysis"])
-            else:
-                st.warning("Ingresa la intervención del interlocutor.")
+        st.success("✨ Tu API Key está lista y cargada desde tu cuenta.")
+        # Aquí continúa el flujo normal de tu asistente de reuniones...
+        
+    if st.sidebar.button("Cerrar Sesión"):
+        st.session_state["authenticated"] = False
+        st.session_state["user_email"] = ""
+        st.session_state["gemini_api_key"] = ""
+        st.rerun()
