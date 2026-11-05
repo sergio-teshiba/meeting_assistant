@@ -187,9 +187,17 @@ else:
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📁 Archivos Fuente de Información")
+    st.sidebar.subheader("🌐 Fuentes de Información para el Agente")
+    st.sidebar.write("Selecciona las fuentes en las que el agente basará su participación:")
+    
+    usar_documentos = st.sidebar.checkbox("📄 Documentos Anexos (Archivos subidos)", value=True)
+    usar_base_conocimiento = st.sidebar.checkbox("🧠 Base de Conocimiento del Modelo (IA)", value=True)
+    usar_busqueda_web = st.sidebar.checkbox("🔍 Búsqueda Web en Tiempo Real (Google Search)", value=False)
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📁 Cargar Archivos Fuente")
     archivos_cargados = st.sidebar.file_uploader(
-        "Carga documentos de soporte (PDF, Word, Excel, Audios, Videos):",
+        "Sube tus documentos (PDF, Word, Excel, Audios, Videos):",
         type=["pdf", "docx", "xlsx", "csv", "txt", "mp3", "wav", "mp4", "mov"],
         accept_multiple_files=True
     )
@@ -209,7 +217,14 @@ else:
     else:
         genai.configure(api_key=st.session_state["gemini_api_key"])
         
-        st.caption(f"🤖 **Dinámica:** {dinamica_reunion} | **Modalidad:** {modalidad_interaccion} | **Enfoque:** {enfoque_analisis} | **Fuentes:** {len(archivos_cargados) if archivos_cargados else 0} archivo(s)")
+        # Resumen visual de fuentes activas
+        fuentes_activas = []
+        if usar_documentos: fuentes_activas.append("📄 Docs Anexos")
+        if usar_base_conocimiento: fuentes_activas.append("🧠 Conocimiento IA")
+        if usar_busqueda_web: fuentes_activas.append("🔍 Web en Vivo")
+        str_fuentes = ", ".join(fuentes_activas) if fuentes_activas else "Ninguna seleccionada"
+
+        st.caption(f"🤖 **Dinámica:** {dinamica_reunion} | **Modalidad:** {modalidad_interaccion} | **Enfoque:** {enfoque_analisis} | **Fuentes Activas:** {str_fuentes}")
 
         tab1, tab2 = st.tabs(["⚡ Feed Proactivo en Vivo", "📋 Minuta y Acuerdos Formales"])
 
@@ -226,13 +241,13 @@ else:
             transcripcion = st.text_area("Transcripción o notas de la reunión en curso:", height=160, placeholder="Ej: Discutiendo los avances del proyecto o situación del equipo...")
 
             if st.button("🚀 Activar Análisis Proactivo"):
-                if transcripcion.strip() or contexto_ampliado.strip() or archivos_cargados:
-                    with st.spinner("Procesando contexto, documentos fuente y conversación con Gemini..."):
+                if transcripcion.strip() or contexto_ampliado.strip() or (usar_documentos and archivos_cargados):
+                    with st.spinner("Procesando fuentes seleccionadas y analizando la conversación..."):
                         try:
                             contenido_archivos = ""
                             media_files_gemini = []
 
-                            if archivos_cargados:
+                            if usar_documentos and archivos_cargados:
                                 for f in archivos_cargados:
                                     ext = f.name.split('.')[-1].lower()
                                     if ext in ['pdf', 'docx', 'xlsx', 'csv', 'txt']:
@@ -241,13 +256,12 @@ else:
                                         uploaded_gemini = genai.upload_file(f)
                                         media_files_gemini.append(uploaded_gemini)
 
-                            # Actualización al nuevo modelo recomendado
                             model = genai.GenerativeModel("gemini-3.8-flash")
                             
                             if "Oyente" in dinamica_reunion:
-                                rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos fuente."
+                                rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con las fuentes de conocimiento activas."
                             elif "Hablante" in dinamica_reunion:
-                                rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa basados en los documentos fuente, respuestas a objeciones y datos exactos."
+                                rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa fundamentados en las fuentes activas, respuestas a objeciones y datos exactos."
                             else:
                                 rol_prompt = "Dinámica DINÁMICA: Evalúa si se requieren síntesis de escucha o argumentos documentados para exponer."
 
@@ -258,30 +272,48 @@ else:
                             else:
                                 estilo_salida = "MODO ESCRITO: Estructura visual en pantalla."
 
+                            # Construcción del prompt según las fuentes seleccionadas
+                            instruccion_fuentes = "FUENTES PERMITIDAS PARA TU ANÁLISIS:\n"
+                            if usar_documentos:
+                                instruccion_fuentes += "- Utiliza la información de los Documentos Anexos subidos como verdad fundamental.\n"
+                            else:
+                                instruccion_fuentes += "- NO consideres ni busques información en documentos anexos.\n"
+                            
+                            if usar_base_conocimiento:
+                                instruccion_fuentes += "- Puedes complementar con tu Base de Conocimiento general de IA.\n"
+                            else:
+                                instruccion_fuentes += "- Limítate estrictamente al texto proporcionado sin agregar teoría externa no fundamentada.\n"
+
+                            if usar_busqueda_web:
+                                instruccion_fuentes += "- Realiza o sugiere verificación con Búsqueda Web en tiempo real si se requieren datos del mercado, normativas actuales o competidores.\n"
+
                             prompt_base = f"""
                             {rol_prompt}
                             Enfoque temático: {enfoque_analisis}
                             Estilo de salida: {estilo_salida}
 
+                            --- INSTRUCCIÓN DE FUENTES DE INFORMACIÓN ---
+                            {instruccion_fuentes}
+
                             --- CONTEXTO AMPLIADO DE LA SESIÓN ---
                             {contexto_ampliado if contexto_ampliado.strip() else 'No especificado.'}
 
-                            --- FUENTES DE INFORMACIÓN (DOCUMENTOS/TABLAS DE SOPORTE) ---
-                            {contenido_archivos if contenido_archivos else 'No se adjuntaron documentos de texto.'}
+                            --- DOCUMENTOS DE SOPORTE ANEXOS ---
+                            {contenido_archivos if (usar_documentos and contenido_archivos) else 'No se utilizarán o no se adjuntaron documentos de texto.'}
 
-                            Procesa la conversación en vivo integrando la información de los documentos fuente y el contexto ampliado.
+                            Procesa la conversación en vivo integrando únicamente las fuentes autorizadas.
                             Genera las siguientes secciones proactivas:
-                            1. **📖 Enriquecimiento del Tema**: Contexto y datos de soporte fundamentados en los documentos adjuntos.
-                            2. **👍 Argumentos a Favor**: Puntos sólidos basados en las fuentes para respaldar la postura.
-                            3. **⚖️ Argumentos en Contra (Contraargumentos)**: Riesgos o discrepancias entre la charla y la documentación oficial.
-                            4. **❓ Preguntas Interesantes y Estratégicas**: 2 o 3 preguntas incisivas basadas en los archivos.
+                            1. **📖 Enriquecimiento del Tema**: Contexto y datos de soporte fundamentados en las fuentes seleccionadas.
+                            2. **👍 Argumentos a Favor**: Puntos sólidos basados en las fuentes autorizadas para respaldar la postura.
+                            3. **⚖️ Argumentos en Contra (Contraargumentos)**: Riesgos, dilemas o discrepancias detectadas.
+                            4. **❓ Preguntas Interesantes y Estratégicas**: 2 o 3 preguntas incisivas basadas en las fuentes.
                             5. **📌 Tareas y Compromisos**: Acuerdos detectados con responsables.
 
                             --- TRANCRIPCIÓN / CONVERSACIÓN EN VIVO ---
                             {transcripcion}
                             """
                             
-                            content_inputs = media_files_gemini + [prompt_base]
+                            content_inputs = media_files_gemini + [prompt_base] if usar_documentos else [prompt_base]
                             response = model.generate_content(content_inputs)
                             texto_respuesta = response.text
                             
@@ -289,7 +321,7 @@ else:
                             st.subheader("💡 Intervenciones y Sugerencias Proactivas del Agente")
                             st.markdown(texto_respuesta)
 
-                            # Reproductor de audio interactivo
+                            # Reproductor verbal interactivo
                             if "Verbal" in modalidad_interaccion:
                                 st.markdown("---")
                                 st.subheader("🔊 Asistencia Verbal Interactiva")
@@ -348,7 +380,7 @@ else:
                         except Exception as e:
                             st.error(f"Error al procesar con Gemini: {e}")
                 else:
-                    st.warning("Ingresa contexto, transcripción o adjunta un archivo para analizar.")
+                    st.warning("Ingresa contexto, transcripción o selecciona una fuente activa.")
 
         with tab2:
             st.subheader("Consolidado Ejecutivo de la Sesión")
