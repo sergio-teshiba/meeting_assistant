@@ -3,3 +3,6 @@ supabase
 google-generativeai
 SpeechRecognition
 pandas
+PyPDF2
+python-docx
+openpyxl
