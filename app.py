@@ -214,7 +214,6 @@ else:
         tab1, tab2 = st.tabs(["⚡ Feed Proactivo en Vivo", "📋 Minuta y Acuerdos Formales"])
 
         with tab1:
-            # Ventana de Contexto Ampliada
             st.subheader("💡 Ventana de Contexto Ampliada")
             contexto_ampliado = st.text_area(
                 "Ingresa antecedentes, objetivos clave de la reunión o perfil de los asistentes:",
@@ -228,9 +227,8 @@ else:
 
             if st.button("🚀 Activar Análisis Proactivo"):
                 if transcripcion.strip() or contexto_ampliado.strip() or archivos_cargados:
-                    with st.spinner("Procesando contexto, documentos fuente y conversación..."):
+                    with st.spinner("Procesando contexto, documentos fuente y conversación con Gemini..."):
                         try:
-                            # 1. Procesar texto de los archivos cargados
                             contenido_archivos = ""
                             media_files_gemini = []
 
@@ -240,11 +238,11 @@ else:
                                     if ext in ['pdf', 'docx', 'xlsx', 'csv', 'txt']:
                                         contenido_archivos += f"\n--- DOCUMENTO FUENTE: {f.name} ---\n" + procesar_archivo_fuente(f)
                                     elif ext in ['mp3', 'wav', 'mp4', 'mov']:
-                                        # Subir archivo multimedia directamente a la API de Gemini
                                         uploaded_gemini = genai.upload_file(f)
                                         media_files_gemini.append(uploaded_gemini)
 
-                            model = genai.GenerativeModel("gemini-2.5-flash")
+                            # Actualización al nuevo modelo recomendado
+                            model = genai.GenerativeModel("gemini-3.8-flash")
                             
                             if "Oyente" in dinamica_reunion:
                                 rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos fuente."
@@ -283,7 +281,6 @@ else:
                             {transcripcion}
                             """
                             
-                            # Si hay archivos de audio/video subidos a Gemini, se envían en la llamada
                             content_inputs = media_files_gemini + [prompt_base]
                             response = model.generate_content(content_inputs)
                             texto_respuesta = response.text
@@ -358,7 +355,7 @@ else:
             if st.button("Generar Reporte Ejecutivo Formal"):
                 if transcripcion.strip() or contexto_ampliado.strip():
                     with st.spinner("Generando reporte final..."):
-                        model = genai.GenerativeModel("gemini-2.5-flash")
+                        model = genai.GenerativeModel("gemini-3.8-flash")
                         formal_prompt = f"Genera una minuta ejecutiva formal enfocada en {enfoque_analisis} basada en el contexto:\n{contexto_ampliado}\n\ny la transcripción:\n{transcripcion}"
                         res_formal = model.generate_content(formal_prompt)
                         st.markdown(res_formal.text)
