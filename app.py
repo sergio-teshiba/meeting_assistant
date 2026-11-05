@@ -108,7 +108,6 @@ else:
     # --- BARRA LATERAL ---
     st.sidebar.title(f"👤 {st.session_state['username']}")
     
-    # Toggle de Tema
     modo_tema = st.sidebar.toggle("🌙 Modo Oscuro / ☀️ Claro", value=(st.session_state["theme_mode"] == "Oscuro"))
     st.session_state["theme_mode"] = "Oscuro" if modo_tema else "Claro"
 
@@ -124,7 +123,6 @@ else:
 
     api_key_actual = st.session_state.get("gemini_api_key", "")
 
-    # Gestión de API Key
     if not api_key_actual:
         st.sidebar.warning("⚠️ Configura tu API Key de Gemini.")
         nueva_key = st.sidebar.text_input("API Key de Gemini:", type="password")
@@ -188,8 +186,6 @@ else:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("🌐 Fuentes de Información para el Agente")
-    st.sidebar.write("Selecciona las fuentes en las que el agente basará su participación:")
-    
     usar_documentos = st.sidebar.checkbox("📄 Documentos Anexos (Archivos subidos)", value=True)
     usar_base_conocimiento = st.sidebar.checkbox("🧠 Base de Conocimiento del Modelo (IA)", value=True)
     usar_busqueda_web = st.sidebar.checkbox("🔍 Búsqueda Web en Tiempo Real (Google Search)", value=False)
@@ -217,14 +213,13 @@ else:
     else:
         genai.configure(api_key=st.session_state["gemini_api_key"])
         
-        # Resumen visual de fuentes activas
         fuentes_activas = []
         if usar_documentos: fuentes_activas.append("📄 Docs Anexos")
         if usar_base_conocimiento: fuentes_activas.append("🧠 Conocimiento IA")
         if usar_busqueda_web: fuentes_activas.append("🔍 Web en Vivo")
         str_fuentes = ", ".join(fuentes_activas) if fuentes_activas else "Ninguna seleccionada"
 
-        st.caption(f"🤖 **Dinámica:** {dinamica_reunion} | **Modalidad:** {modalidad_interaccion} | **Enfoque:** {enfoque_analisis} | **Fuentes Activas:** {str_fuentes}")
+        st.caption(f"🤖 **Dinámica:** {dinamica_reunion} | **Modalidad:** {modalidad_interaccion} | **Enfoque:** {enfoque_analisis} | **Fuentes:** {str_fuentes}")
 
         tab1, tab2 = st.tabs(["⚡ Feed Proactivo en Vivo", "📋 Minuta y Acuerdos Formales"])
 
@@ -233,16 +228,76 @@ else:
             contexto_ampliado = st.text_area(
                 "Ingresa antecedentes, objetivos clave de la reunión o perfil de los asistentes:",
                 height=90,
-                placeholder="Ej: Reunión con el cliente X para revisar el presupuesto del Q4. El objetivo principal es defender el incremento del 15%..."
+                placeholder="Ej: Reunión con el cliente X para revisar el presupuesto del Q4..."
             )
 
             st.markdown("---")
-            st.subheader("🗣️ Conversación o Transcripción en Vivo")
-            transcripcion = st.text_area("Transcripción o notas de la reunión en curso:", height=160, placeholder="Ej: Discutiendo los avances del proyecto o situación del equipo...")
+            st.subheader("🗣️ Dictado por Micrófono o Transcripción Manual")
+            st.write("Usa el micrófono del navegador o escribe las notas de la conversación:")
+            
+            # Reconocedor de voz integrado en el navegador
+            html_stt = """
+            <div style="margin-bottom: 15px;">
+                <button id="start-rec" style="padding: 10px 18px; background-color: #008080; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                    🎙️ Iniciar Dictado por Micrófono
+                </button>
+                <span id="rec-status" style="margin-left: 12px; font-size: 14px; color: #94A3B8;">Micrófono inactivo</span>
+            </div>
+            <script>
+                const btn = document.getElementById('start-rec');
+                const status = document.getElementById('rec-status');
+                
+                if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    const recognition = new SpeechRecognition();
+                    recognition.lang = 'es-ES';
+                    recognition.continuous = true;
+                    recognition.interimResults = true;
+
+                    let recognizing = false;
+
+                    btn.onclick = () => {
+                        if (!recognizing) {
+                            recognition.start();
+                            recognizing = true;
+                            btn.style.backgroundColor = '#DC2626';
+                            btn.innerText = '🛑 Detener Micrófono';
+                            status.innerText = '🔴 Escuchando conversación en vivo...';
+                        } else {
+                            recognition.stop();
+                            recognizing = false;
+                            btn.style.backgroundColor = '#008080';
+                            btn.innerText = '🎙️ Iniciar Dictado por Micrófono';
+                            status.innerText = '⏹️ Micrófono pausado';
+                        }
+                    };
+
+                    recognition.onresult = (event) => {
+                        let text = '';
+                        for (let i = event.resultIndex; i < event.results.length; ++i) {
+                            text += event.results[i][0].transcript;
+                        }
+                        // Intenta pasar el texto transcrito al área de texto si está disponible
+                        const textAreas = window.parent.document.querySelectorAll('textarea');
+                        if (textAreas.length >= 2) {
+                            textAreas[1].value = text;
+                            textAreas[1].dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    };
+                } else {
+                    status.innerText = '⚠️ Navegador no soporta dictado directo. Escribe en el cuadro inferior.';
+                }
+            </script>
+            """
+            components.html(html_stt, height=65)
+
+            transcripcion = st.text_area("Transcripción o texto capturado:", height=150, placeholder="El dictado por micrófono o tus notas aparecerán aquí...")
 
             if st.button("🚀 Activar Análisis Proactivo"):
-                if transcripcion.strip() or contexto_ampliado.strip() or (usar_documentos and archivos_cargados):
-                    with st.spinner("Procesando fuentes seleccionadas y analizando la conversación..."):
+                if not transcripcion.strip() and not contexto_ampliado.strip() and not (usar_documentos and archivos_cargados):
+                    st.warning("⚠️ Debes dictar por micrófono, escribir en el cuadro de transcripción o adjuntar un archivo para ejecutar el análisis.")
+                else:
+                    with st.spinner("Procesando fuentes seleccionadas y analizando la conversación con Gemini..."):
                         try:
                             contenido_archivos = ""
                             media_files_gemini = []
@@ -272,7 +327,6 @@ else:
                             else:
                                 estilo_salida = "MODO ESCRITO: Estructura visual en pantalla."
 
-                            # Construcción del prompt según las fuentes seleccionadas
                             instruccion_fuentes = "FUENTES PERMITIDAS PARA TU ANÁLISIS:\n"
                             if usar_documentos:
                                 instruccion_fuentes += "- Utiliza la información de los Documentos Anexos subidos como verdad fundamental.\n"
@@ -379,8 +433,6 @@ else:
 
                         except Exception as e:
                             st.error(f"Error al procesar con Gemini: {e}")
-                else:
-                    st.warning("Ingresa contexto, transcripción o selecciona una fuente activa.")
 
         with tab2:
             st.subheader("Consolidado Ejecutivo de la Sesión")
