@@ -56,7 +56,7 @@ def authenticate_user(email, password):
     except Exception as e:
         st.error(f"Error al conectar con la base de datos: {e}")
 
-# 3. Función auxiliar robusta para extraer texto de archivos subidos localmente
+# 3. Función auxiliar para extraer texto de archivos subidos
 def procesar_archivo_fuente(uploaded_file):
     texto_extraido = ""
     file_type = uploaded_file.name.split('.')[-1].lower()
@@ -295,125 +295,133 @@ else:
                 if not transcripcion.strip() and not contexto_ampliado.strip() and not (usar_documentos and archivos_cargados):
                     st.warning("⚠️ Debes escribir una instrucción, usar el micrófono o adjuntar un archivo para ejecutar el análisis.")
                 else:
-                    with st.spinner("Procesando documento anexo y generando análisis con Gemini..."):
-                        try:
-                            # Extracción robusta y directa del texto de los archivos cargados
-                            contenido_archivos = ""
-                            if usar_documentos and archivos_cargados:
-                                for f in archivos_cargados:
-                                    texto_doc = procesar_archivo_fuente(f)
-                                    contenido_archivos += f"\n\n==============================\n DOCUMENTO ANEXO: {f.name}\n==============================\n{texto_doc}"
+                    # Contenedor de estado visual para evitar que se quede congelado
+                    status_placeholder = st.empty()
+                    status_placeholder.info("⏳ Paso 1/3: Leyendo y extrayendo texto de los documentos fuente...")
+                    
+                    try:
+                        contenido_archivos = ""
+                        if usar_documentos and archivos_cargados:
+                            for f in archivos_cargados:
+                                texto_doc = procesar_archivo_fuente(f)
+                                contenido_archivos += f"\n\n==============================\n DOCUMENTO ANEXO: {f.name}\n==============================\n{texto_doc}"
 
-                            model = genai.GenerativeModel("gemini-3.8-flash")
-                            
-                            if "Oyente" in dinamica_reunion:
-                                rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos anexos."
-                            elif "Hablante" in dinamica_reunion:
-                                rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa fundamentados en las fuentes activas y datos exactos."
-                            else:
-                                rol_prompt = "Dinámica DINÁMICA: Evalúa si se requieren síntesis de escucha o argumentos documentados."
+                        status_placeholder.info("⏳ Paso 2/3: Conectando con Gemini (gemini-3.8-flash)...")
 
-                            if "Susurro" in modalidad_interaccion:
-                                estilo_salida = "MODO AUDÍFONOS (SUSURRO): Salida concisa, suave y directa al oído."
-                            elif "Altavoz" in modalidad_interaccion:
-                                estilo_salida = "MODO VERBAL ALTAVOZ: Formato claro para reproducción hablada."
-                            else:
-                                estilo_salida = "MODO ESCRITO: Estructura visual en pantalla."
+                        model = genai.GenerativeModel("gemini-3.8-flash")
+                        
+                        if "Oyente" in dinamica_reunion:
+                            rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos anexos."
+                        elif "Hablante" in dinamica_reunion:
+                            rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa fundamentados en las fuentes activas y datos exactos."
+                        else:
+                            rol_prompt = "Dinámica DINÁMICA: Evalúa si se requieren síntesis de escucha o argumentos documentados."
 
-                            instruccion_fuentes = "FUENTES PERMITIDAS PARA TU ANÁLISIS:\n"
-                            if usar_documentos:
-                                instruccion_fuentes += "- Utiliza obligatoriamente la información contenida en los Documentos Anexos provistos arriba como fuente principal.\n"
-                            if usar_base_conocimiento:
-                                instruccion_fuentes += "- Complementa con tu Base de Conocimiento general de IA si es necesario.\n"
+                        if "Susurro" in modalidad_interaccion:
+                            estilo_salida = "MODO AUDÍFONOS (SUSURRO): Salida concisa, suave y directa al oído."
+                        elif "Altavoz" in modalidad_interaccion:
+                            estilo_salida = "MODO VERBAL ALTAVOZ: Formato claro para reproducción hablada."
+                        else:
+                            estilo_salida = "MODO ESCRITO: Estructura visual en pantalla."
 
-                            prompt_completo = f"""
-                            {rol_prompt}
-                            Enfoque temático: {enfoque_analisis}
-                            Estilo de salida: {estilo_salida}
+                        instruccion_fuentes = "FUENTES PERMITIDAS PARA TU ANÁLISIS:\n"
+                        if usar_documentos:
+                            instruccion_fuentes += "- Utiliza obligatoriamente la información contenida en los Documentos Anexos provistos arriba como fuente principal.\n"
+                        if usar_base_conocimiento:
+                            instruccion_fuentes += "- Complementa con tu Base de Conocimiento general de IA si es necesario.\n"
 
-                            {instruccion_fuentes}
+                        prompt_completo = f"""
+                        {rol_prompt}
+                        Enfoque temático: {enfoque_analisis}
+                        Estilo de salida: {estilo_salida}
 
-                            --- CONTEXTO ADICIONAL DE LA SESIÓN ---
-                            {contexto_ampliado if contexto_ampliado.strip() else 'No especificado.'}
+                        {instruccion_fuentes}
 
-                            {contenido_archivos if (usar_documentos and contenido_archivos) else 'No se adjuntaron documentos de texto.'}
+                        --- CONTEXTO ADICIONAL DE LA SESIÓN ---
+                        {contexto_ampliado if contexto_ampliado.strip() else 'No especificado.'}
 
-                            --- SOLICITUD / CONVERSACIÓN DEL USUARIO ---
-                            {transcripcion if transcripcion.strip() else 'Realiza un resumen y análisis general del documento anexo.'}
+                        {contenido_archivos if (usar_documentos and contenido_archivos) else 'No se adjuntaron documentos de texto.'}
 
-                            Genera la respuesta proactiva estructurada con:
-                            1. **📖 Resumen y Enriquecimiento del Tema**
-                            2. **👍 Puntos Clave / Argumentos a Favor**
-                            3. **⚖️ Consideraciones / Puntos Críticos**
-                            4. **❓ Preguntas Estratégicas Sugeridas**
-                            5. **📌 Tareas y Compromisos Detectados**
-                            """
-                            
-                            response = model.generate_content(prompt_completo)
-                            texto_respuesta = response.text
-                            
+                        --- SOLICITUD / CONVERSACIÓN DEL USUARIO ---
+                        {transcripcion if transcripcion.strip() else 'Realiza un resumen y análisis general del documento anexo.'}
+
+                        Genera la respuesta proactiva estructurada con:
+                        1. **📖 Resumen y Enriquecimiento del Tema**
+                        2. **👍 Puntos Clave / Argumentos a Favor**
+                        3. **⚖️ Consideraciones / Puntos Críticos**
+                        4. **❓ Preguntas Estratégicas Sugeridas**
+                        5. **📌 Tareas y Compromisos Detectados**
+                        """
+                        
+                        status_placeholder.info("⏳ Paso 3/3: Generando respuesta inteligente...")
+                        response = model.generate_content(prompt_completo)
+                        texto_respuesta = response.text
+                        
+                        # Limpiar el mensaje de estado intermedio
+                        status_placeholder.empty()
+
+                        st.markdown("---")
+                        st.subheader("💡 Intervenciones y Sugerencias Proactivas del Agente")
+                        st.markdown(texto_respuesta)
+
+                        # Reproductor verbal interactivo
+                        if "Verbal" in modalidad_interaccion:
                             st.markdown("---")
-                            st.subheader("💡 Intervenciones y Sugerencias Proactivas del Agente")
-                            st.markdown(texto_respuesta)
+                            st.subheader("🔊 Asistencia Verbal Interactiva")
+                            st.info("📱 **Móvil:** Toca la pantalla (Tap) para pausar/reanudar el habla.  \n💻 **Computadora:** Presiona la **Barra Espaciadora** para pausar/reanudar la locución.")
+                            
+                            texto_limpio = texto_respuesta.replace('\n', ' ').replace("'", "\\'").replace('"', '\\"')
+                            rate = "0.8" if "Audífonos" in modalidad_interaccion else "1.0"
+                            pitch = "0.7" if "Audífonos" in modalidad_interaccion else "1.0"
 
-                            # Reproductor verbal interactivo
-                            if "Verbal" in modalidad_interaccion:
-                                st.markdown("---")
-                                st.subheader("🔊 Asistencia Verbal Interactiva")
-                                st.info("📱 **Móvil:** Toca la pantalla (Tap) para pausar/reanudar el habla.  \n💻 **Computadora:** Presiona la **Barra Espaciadora** para pausar/reanudar la locución.")
+                            html_code = f"""
+                            <div id="speech-container" style="padding: 15px; border-radius: 8px; background-color: #1E293B; color: #FFFFFF; text-align: center; cursor: pointer; user-select: none;">
+                                <h4 id="speech-status">▶️ Haz clic aquí, Tap en móvil o presiona [Espacio] para Pausar / Reanudar Voz</h4>
+                                <p style="font-size: 12px; color: #94A3B8;">(Modo: {'Susurro / Discreto' if 'Audífonos' in modalidad_interaccion else 'Altavoz Estándar'})</p>
+                            </div>
+
+                            <script>
+                                const text = "{texto_limpio}";
+                                const statusEl = document.getElementById("speech-status");
+                                const container = document.getElementById("speech-container");
                                 
-                                texto_limpio = texto_respuesta.replace('\n', ' ').replace("'", "\\'").replace('"', '\\"')
-                                rate = "0.8" if "Audífonos" in modalidad_interaccion else "1.0"
-                                pitch = "0.7" if "Audífonos" in modalidad_interaccion else "1.0"
+                                let synth = window.speechSynthesis;
+                                let utterance = new SpeechSynthesisUtterance(text);
+                                utterance.lang = 'es-ES';
+                                utterance.rate = {rate};
+                                utterance.pitch = {pitch};
 
-                                html_code = f"""
-                                <div id="speech-container" style="padding: 15px; border-radius: 8px; background-color: #1E293B; color: #FFFFFF; text-align: center; cursor: pointer; user-select: none;">
-                                    <h4 id="speech-status">▶️ Haz clic aquí, Tap en móvil o presiona [Espacio] para Pausar / Reanudar Voz</h4>
-                                    <p style="font-size: 12px; color: #94A3B8;">(Modo: {'Susurro / Discreto' if 'Audífonos' in modalidad_interaccion else 'Altavoz Estándar'})</p>
-                                </div>
-
-                                <script>
-                                    const text = "{texto_limpio}";
-                                    const statusEl = document.getElementById("speech-status");
-                                    const container = document.getElementById("speech-container");
-                                    
-                                    let synth = window.speechSynthesis;
-                                    let utterance = new SpeechSynthesisUtterance(text);
-                                    utterance.lang = 'es-ES';
-                                    utterance.rate = {rate};
-                                    utterance.pitch = {pitch};
-
-                                    function toggleSpeech() {{
-                                        if (!synth.speaking) {{
-                                            synth.speak(utterance);
-                                            statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
-                                        }} else if (synth.paused) {{
-                                            synth.resume();
-                                            statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
-                                        }} else {{
-                                            synth.pause();
-                                            statusEl.innerText = "▶️ PAUSADO. Tap en pantalla o [Espacio] para REANUDAR";
-                                        }}
+                                function toggleSpeech() {{
+                                    if (!synth.speaking) {{
+                                        synth.speak(utterance);
+                                        statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
+                                    }} else if (synth.paused) {{
+                                        synth.resume();
+                                        statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
+                                    }} else {{
+                                        synth.pause();
+                                        statusEl.innerText = "▶️ PAUSADO. Tap en pantalla o [Espacio] para REANUDAR";
                                     }}
+                                }}
 
-                                    container.addEventListener("click", toggleSpeech);
+                                container.addEventListener("click", toggleSpeech);
 
-                                    window.addEventListener("keydown", function(e) {{
-                                        if (e.code === "Space" && e.target === document.body) {{
-                                            e.preventDefault();
-                                            toggleSpeech();
-                                        }}
-                                    }});
+                                window.addEventListener("keydown", function(e) {{
+                                    if (e.code === "Space" && e.target === document.body) {{
+                                        e.preventDefault();
+                                        toggleSpeech();
+                                    }}
+                                }});
 
-                                    utterance.onend = function() {{
-                                        statusEl.innerText = "✅ Lectura completada. Haz clic o Tap para volver a escuchar.";
-                                    }};
-                                </script>
-                                """
-                                components.html(html_code, height=130)
+                                utterance.onend = function() {{
+                                    statusEl.innerText = "✅ Lectura completada. Haz clic o Tap para volver a escuchar.";
+                                }};
+                            </script>
+                            """
+                            components.html(html_code, height=130)
 
-                        except Exception as e:
-                            st.error(f"Error al procesar con Gemini: {e}")
+                    except Exception as e:
+                        status_placeholder.error(f"Error al procesar con Gemini: {e}")
 
         with tab2:
             st.subheader("Consolidado Ejecutivo de la Sesión")
