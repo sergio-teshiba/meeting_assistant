@@ -56,18 +56,18 @@ def authenticate_user(email, password):
     except Exception as e:
         st.error(f"Error al conectar con la base de datos: {e}")
 
-# 3. Función auxiliar para extraer texto de archivos subidos
+# 3. Función auxiliar robusta para extraer texto de archivos subidos localmente
 def procesar_archivo_fuente(uploaded_file):
     texto_extraido = ""
     file_type = uploaded_file.name.split('.')[-1].lower()
     
     try:
         if file_type == 'txt':
-            texto_extraido = uploaded_file.read().decode('utf-8')
+            texto_extraido = uploaded_file.read().decode('utf-8', errors='ignore')
         elif file_type == 'pdf':
             pdf_reader = PyPDF2.PdfReader(uploaded_file)
             for page in pdf_reader.pages:
-                texto_extraido += page.extract_text() or ""
+                texto_extraido += (page.extract_text() or "") + "\n"
         elif file_type == 'docx':
             doc_file = docx.Document(uploaded_file)
             for p in doc_file.paragraphs:
@@ -193,8 +193,8 @@ else:
     st.sidebar.markdown("---")
     st.sidebar.subheader("📁 Cargar Archivos Fuente")
     archivos_cargados = st.sidebar.file_uploader(
-        "Sube tus documentos (PDF, Word, Excel, Audios, Videos):",
-        type=["pdf", "docx", "xlsx", "csv", "txt", "mp3", "wav", "mp4", "mov"],
+        "Sube tus documentos (PDF, Word, Excel, TXT):",
+        type=["pdf", "docx", "xlsx", "csv", "txt"],
         accept_multiple_files=True
     )
 
@@ -228,12 +228,11 @@ else:
             contexto_ampliado = st.text_area(
                 "Ingresa antecedentes, objetivos clave de la reunión o perfil de los asistentes:",
                 height=90,
-                placeholder="Ej: Reunión con el cliente X para revisar el presupuesto del Q4..."
+                placeholder="Ej: Reunión para revisar el documento adjunto y extraer puntos clave..."
             )
 
             st.markdown("---")
             st.subheader("🗣️ Dictado por Micrófono o Transcripción Manual")
-            st.write("Usa el micrófono del navegador o escribe las notas de la conversación:")
             
             # Reconocedor de voz integrado en el navegador
             html_stt = """
@@ -277,7 +276,6 @@ else:
                         for (let i = event.resultIndex; i < event.results.length; ++i) {
                             text += event.results[i][0].transcript;
                         }
-                        // Intenta pasar el texto transcrito al área de texto si está disponible
                         const textAreas = window.parent.document.querySelectorAll('textarea');
                         if (textAreas.length >= 2) {
                             textAreas[1].value = text;
@@ -285,40 +283,35 @@ else:
                         }
                     };
                 } else {
-                    status.innerText = '⚠️ Navegador no soporta dictado directo. Escribe en el cuadro inferior.';
+                    status.innerText = '⚠️ Navegador no soporta dictado directo.';
                 }
             </script>
             """
             components.html(html_stt, height=65)
 
-            transcripcion = st.text_area("Transcripción o texto capturado:", height=150, placeholder="El dictado por micrófono o tus notas aparecerán aquí...")
+            transcripcion = st.text_area("Transcripción o texto capturado:", height=150, placeholder="Escribe aquí tu solicitud (ej. 'hazme el resumen del documento anexo')...")
 
             if st.button("🚀 Activar Análisis Proactivo"):
                 if not transcripcion.strip() and not contexto_ampliado.strip() and not (usar_documentos and archivos_cargados):
-                    st.warning("⚠️ Debes dictar por micrófono, escribir en el cuadro de transcripción o adjuntar un archivo para ejecutar el análisis.")
+                    st.warning("⚠️ Debes escribir una instrucción, usar el micrófono o adjuntar un archivo para ejecutar el análisis.")
                 else:
-                    with st.spinner("Procesando fuentes seleccionadas y analizando la conversación con Gemini..."):
+                    with st.spinner("Procesando documento anexo y generando análisis con Gemini..."):
                         try:
+                            # Extracción robusta y directa del texto de los archivos cargados
                             contenido_archivos = ""
-                            media_files_gemini = []
-
                             if usar_documentos and archivos_cargados:
                                 for f in archivos_cargados:
-                                    ext = f.name.split('.')[-1].lower()
-                                    if ext in ['pdf', 'docx', 'xlsx', 'csv', 'txt']:
-                                        contenido_archivos += f"\n--- DOCUMENTO FUENTE: {f.name} ---\n" + procesar_archivo_fuente(f)
-                                    elif ext in ['mp3', 'wav', 'mp4', 'mov']:
-                                        uploaded_gemini = genai.upload_file(f)
-                                        media_files_gemini.append(uploaded_gemini)
+                                    texto_doc = procesar_archivo_fuente(f)
+                                    contenido_archivos += f"\n\n==============================\n DOCUMENTO ANEXO: {f.name}\n==============================\n{texto_doc}"
 
                             model = genai.GenerativeModel("gemini-3.8-flash")
                             
                             if "Oyente" in dinamica_reunion:
-                                rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con las fuentes de conocimiento activas."
+                                rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos anexos."
                             elif "Hablante" in dinamica_reunion:
-                                rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa fundamentados en las fuentes activas, respuestas a objeciones y datos exactos."
+                                rol_prompt = "Dinámica de HABLANTE/PRESENTADOR: Proporciona argumentos de defensa fundamentados en las fuentes activas y datos exactos."
                             else:
-                                rol_prompt = "Dinámica DINÁMICA: Evalúa si se requieren síntesis de escucha o argumentos documentados para exponer."
+                                rol_prompt = "Dinámica DINÁMICA: Evalúa si se requieren síntesis de escucha o argumentos documentados."
 
                             if "Susurro" in modalidad_interaccion:
                                 estilo_salida = "MODO AUDÍFONOS (SUSURRO): Salida concisa, suave y directa al oído."
@@ -329,46 +322,34 @@ else:
 
                             instruccion_fuentes = "FUENTES PERMITIDAS PARA TU ANÁLISIS:\n"
                             if usar_documentos:
-                                instruccion_fuentes += "- Utiliza la información de los Documentos Anexos subidos como verdad fundamental.\n"
-                            else:
-                                instruccion_fuentes += "- NO consideres ni busques información en documentos anexos.\n"
-                            
+                                instruccion_fuentes += "- Utiliza obligatoriamente la información contenida en los Documentos Anexos provistos arriba como fuente principal.\n"
                             if usar_base_conocimiento:
-                                instruccion_fuentes += "- Puedes complementar con tu Base de Conocimiento general de IA.\n"
-                            else:
-                                instruccion_fuentes += "- Limítate estrictamente al texto proporcionado sin agregar teoría externa no fundamentada.\n"
+                                instruccion_fuentes += "- Complementa con tu Base de Conocimiento general de IA si es necesario.\n"
 
-                            if usar_busqueda_web:
-                                instruccion_fuentes += "- Realiza o sugiere verificación con Búsqueda Web en tiempo real si se requieren datos del mercado, normativas actuales o competidores.\n"
-
-                            prompt_base = f"""
+                            prompt_completo = f"""
                             {rol_prompt}
                             Enfoque temático: {enfoque_analisis}
                             Estilo de salida: {estilo_salida}
 
-                            --- INSTRUCCIÓN DE FUENTES DE INFORMACIÓN ---
                             {instruccion_fuentes}
 
-                            --- CONTEXTO AMPLIADO DE LA SESIÓN ---
+                            --- CONTEXTO ADICIONAL DE LA SESIÓN ---
                             {contexto_ampliado if contexto_ampliado.strip() else 'No especificado.'}
 
-                            --- DOCUMENTOS DE SOPORTE ANEXOS ---
-                            {contenido_archivos if (usar_documentos and contenido_archivos) else 'No se utilizarán o no se adjuntaron documentos de texto.'}
+                            {contenido_archivos if (usar_documentos and contenido_archivos) else 'No se adjuntaron documentos de texto.'}
 
-                            Procesa la conversación en vivo integrando únicamente las fuentes autorizadas.
-                            Genera las siguientes secciones proactivas:
-                            1. **📖 Enriquecimiento del Tema**: Contexto y datos de soporte fundamentados en las fuentes seleccionadas.
-                            2. **👍 Argumentos a Favor**: Puntos sólidos basados en las fuentes autorizadas para respaldar la postura.
-                            3. **⚖️ Argumentos en Contra (Contraargumentos)**: Riesgos, dilemas o discrepancias detectadas.
-                            4. **❓ Preguntas Interesantes y Estratégicas**: 2 o 3 preguntas incisivas basadas en las fuentes.
-                            5. **📌 Tareas y Compromisos**: Acuerdos detectados con responsables.
+                            --- SOLICITUD / CONVERSACIÓN DEL USUARIO ---
+                            {transcripcion if transcripcion.strip() else 'Realiza un resumen y análisis general del documento anexo.'}
 
-                            --- TRANCRIPCIÓN / CONVERSACIÓN EN VIVO ---
-                            {transcripcion}
+                            Genera la respuesta proactiva estructurada con:
+                            1. **📖 Resumen y Enriquecimiento del Tema**
+                            2. **👍 Puntos Clave / Argumentos a Favor**
+                            3. **⚖️ Consideraciones / Puntos Críticos**
+                            4. **❓ Preguntas Estratégicas Sugeridas**
+                            5. **📌 Tareas y Compromisos Detectados**
                             """
                             
-                            content_inputs = media_files_gemini + [prompt_base] if usar_documentos else [prompt_base]
-                            response = model.generate_content(content_inputs)
+                            response = model.generate_content(prompt_completo)
                             texto_respuesta = response.text
                             
                             st.markdown("---")
@@ -440,7 +421,7 @@ else:
                 if transcripcion.strip() or contexto_ampliado.strip():
                     with st.spinner("Generando reporte final..."):
                         model = genai.GenerativeModel("gemini-3.8-flash")
-                        formal_prompt = f"Genera una minuta ejecutiva formal enfocada en {enfoque_analisis} basada en el contexto:\n{contexto_ampliado}\n\ny la transcripción:\n{transcripcion}"
+                        formal_prompt = f"Genera una minuta ejecutiva formal enfocada en {enfoque_analisis} basada en la transcripción:\n{transcripcion}"
                         res_formal = model.generate_content(formal_prompt)
                         st.markdown(res_formal.text)
                 else:
