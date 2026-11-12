@@ -295,7 +295,6 @@ else:
                 if not transcripcion.strip() and not contexto_ampliado.strip() and not (usar_documentos and archivos_cargados):
                     st.warning("⚠️ Debes escribir una instrucción, usar el micrófono o adjuntar un archivo para ejecutar el análisis.")
                 else:
-                    # Contenedor de estado visual para evitar que se quede congelado
                     status_placeholder = st.empty()
                     status_placeholder.info("⏳ Paso 1/3: Leyendo y extrayendo texto de los documentos fuente...")
                     
@@ -306,9 +305,10 @@ else:
                                 texto_doc = procesar_archivo_fuente(f)
                                 contenido_archivos += f"\n\n==============================\n DOCUMENTO ANEXO: {f.name}\n==============================\n{texto_doc}"
 
-                        status_placeholder.info("⏳ Paso 2/3: Conectando con Gemini (gemini-3.8-flash)...")
+                        status_placeholder.info("⏳ Paso 2/3: Conectando con Gemini...")
 
-                        model = genai.GenerativeModel("gemini-3.8-flash")
+                        # Utilizar el nombre estándar universal del modelo flash actual
+                        model = genai.GenerativeModel("gemini-1.5-flash")
                         
                         if "Oyente" in dinamica_reunion:
                             rol_prompt = "Dinámica de OYENTE: Resúmenes relámpago, extracción de tareas y contraste con los documentos anexos."
@@ -353,84 +353,90 @@ else:
                         5. **📌 Tareas y Compromisos Detectados**
                         """
                         
-                        status_placeholder.info("⏳ Paso 3/3: Generando respuesta inteligente...")
+                        status_placeholder.info("⏳ Paso 3/3: Generando respuesta inteligente con Gemini...")
                         response = model.generate_content(prompt_completo)
-                        texto_respuesta = response.text
                         
-                        # Limpiar el mensaje de estado intermedio
-                        status_placeholder.empty()
+                        # Validación estricta de la respuesta recibida
+                        if response and hasattr(response, 'text') and response.text:
+                            texto_respuesta = response.text
+                            status_placeholder.empty()
 
-                        st.markdown("---")
-                        st.subheader("💡 Intervenciones y Sugerencias Proactivas del Agente")
-                        st.markdown(texto_respuesta)
-
-                        # Reproductor verbal interactivo
-                        if "Verbal" in modalidad_interaccion:
                             st.markdown("---")
-                            st.subheader("🔊 Asistencia Verbal Interactiva")
-                            st.info("📱 **Móvil:** Toca la pantalla (Tap) para pausar/reanudar el habla.  \n💻 **Computadora:** Presiona la **Barra Espaciadora** para pausar/reanudar la locución.")
-                            
-                            texto_limpio = texto_respuesta.replace('\n', ' ').replace("'", "\\'").replace('"', '\\"')
-                            rate = "0.8" if "Audífonos" in modalidad_interaccion else "1.0"
-                            pitch = "0.7" if "Audífonos" in modalidad_interaccion else "1.0"
+                            st.subheader("💡 Intervenciones y Sugerencias Proactivas del Agente")
+                            st.markdown(texto_respuesta)
 
-                            html_code = f"""
-                            <div id="speech-container" style="padding: 15px; border-radius: 8px; background-color: #1E293B; color: #FFFFFF; text-align: center; cursor: pointer; user-select: none;">
-                                <h4 id="speech-status">▶️ Haz clic aquí, Tap en móvil o presiona [Espacio] para Pausar / Reanudar Voz</h4>
-                                <p style="font-size: 12px; color: #94A3B8;">(Modo: {'Susurro / Discreto' if 'Audífonos' in modalidad_interaccion else 'Altavoz Estándar'})</p>
-                            </div>
-
-                            <script>
-                                const text = "{texto_limpio}";
-                                const statusEl = document.getElementById("speech-status");
-                                const container = document.getElementById("speech-container");
+                            # Reproductor verbal interactivo
+                            if "Verbal" in modalidad_interaccion:
+                                st.markdown("---")
+                                st.subheader("🔊 Asistencia Verbal Interactiva")
+                                st.info("📱 **Móvil:** Toca la pantalla (Tap) para pausar/reanudar el habla.  \n💻 **Computadora:** Presiona la **Barra Espaciadora** para pausar/reanudar la locución.")
                                 
-                                let synth = window.speechSynthesis;
-                                let utterance = new SpeechSynthesisUtterance(text);
-                                utterance.lang = 'es-ES';
-                                utterance.rate = {rate};
-                                utterance.pitch = {pitch};
+                                texto_limpio = texto_respuesta.replace('\n', ' ').replace("'", "\\'").replace('"', '\\"')
+                                rate = "0.8" if "Audífonos" in modalidad_interaccion else "1.0"
+                                pitch = "0.7" if "Audífonos" in modalidad_interaccion else "1.0"
 
-                                function toggleSpeech() {{
-                                    if (!synth.speaking) {{
-                                        synth.speak(utterance);
-                                        statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
-                                    }} else if (synth.paused) {{
-                                        synth.resume();
-                                        statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
-                                    }} else {{
-                                        synth.pause();
-                                        statusEl.innerText = "▶️ PAUSADO. Tap en pantalla o [Espacio] para REANUDAR";
+                                html_code = f"""
+                                <div id="speech-container" style="padding: 15px; border-radius: 8px; background-color: #1E293B; color: #FFFFFF; text-align: center; cursor: pointer; user-select: none;">
+                                    <h4 id="speech-status">▶️ Haz clic aquí, Tap en móvil o presiona [Espacio] para Pausar / Reanudar Voz</h4>
+                                    <p style="font-size: 12px; color: #94A3B8;">(Modo: {'Susurro / Discreto' if 'Audífonos' in modalidad_interaccion else 'Altavoz Estándar'})</p>
+                                </div>
+
+                                <script>
+                                    const text = "{texto_limpio}";
+                                    const statusEl = document.getElementById("speech-status");
+                                    const container = document.getElementById("speech-container");
+                                    
+                                    let synth = window.speechSynthesis;
+                                    let utterance = new SpeechSynthesisUtterance(text);
+                                    utterance.lang = 'es-ES';
+                                    utterance.rate = {rate};
+                                    utterance.pitch = {pitch};
+
+                                    function toggleSpeech() {{
+                                        if (!synth.speaking) {{
+                                            synth.speak(utterance);
+                                            statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
+                                        }} else if (synth.paused) {{
+                                            synth.resume();
+                                            statusEl.innerText = "⏸️ Hablando... Tap en pantalla o [Espacio] para PAUSAR";
+                                        }} else {{
+                                            synth.pause();
+                                            statusEl.innerText = "▶️ PAUSADO. Tap en pantalla o [Espacio] para REANUDAR";
+                                        }}
                                     }}
-                                }}
 
-                                container.addEventListener("click", toggleSpeech);
+                                    container.addEventListener("click", toggleSpeech);
 
-                                window.addEventListener("keydown", function(e) {{
-                                    if (e.code === "Space" && e.target === document.body) {{
-                                        e.preventDefault();
-                                        toggleSpeech();
-                                    }}
-                                }});
+                                    window.addEventListener("keydown", function(e) {{
+                                        if (e.code === "Space" && e.target === document.body) {{
+                                            e.preventDefault();
+                                            toggleSpeech();
+                                        }}
+                                    }});
 
-                                utterance.onend = function() {{
-                                    statusEl.innerText = "✅ Lectura completada. Haz clic o Tap para volver a escuchar.";
-                                }};
-                            </script>
-                            """
-                            components.html(html_code, height=130)
+                                    utterance.onend = function() {{
+                                        statusEl.innerText = "✅ Lectura completada. Haz clic o Tap para volver a escuchar.";
+                                    }};
+                                </script>
+                                """
+                                components.html(html_code, height=130)
+                        else:
+                            status_placeholder.warning("⚠️ La API de Gemini no devolvió texto. Revisa que tu API Key tenga cuota activa y permisos para el modelo.")
 
                     except Exception as e:
-                        status_placeholder.error(f"Error al procesar con Gemini: {e}")
+                        status_placeholder.error(f"❌ Error crítico al procesar con Gemini: {str(e)}")
 
         with tab2:
             st.subheader("Consolidado Ejecutivo de la Sesión")
             if st.button("Generar Reporte Ejecutivo Formal"):
                 if transcripcion.strip() or contexto_ampliado.strip():
                     with st.spinner("Generando reporte final..."):
-                        model = genai.GenerativeModel("gemini-3.8-flash")
+                        model = genai.GenerativeModel("gemini-1.5-flash")
                         formal_prompt = f"Genera una minuta ejecutiva formal enfocada en {enfoque_analisis} basada en la transcripción:\n{transcripcion}"
                         res_formal = model.generate_content(formal_prompt)
-                        st.markdown(res_formal.text)
+                        if res_formal and hasattr(res_formal, 'text'):
+                            st.markdown(res_formal.text)
+                        else:
+                            st.error("No se pudo generar el reporte.")
                 else:
                     st.warning("Ingresa información en la pestaña principal.")
