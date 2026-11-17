@@ -1,0 +1,14 @@
+# Secretos: nunca subir al repositorio (es público)
+.streamlit/secrets.toml
+.env
+
+# Datos locales (SQLite de desarrollo)
+.local/
+
+# Sistema / Python / herramientas
+.DS_Store
+__pycache__/
+*.pyc
+venv/
+.venv/
+.claude/

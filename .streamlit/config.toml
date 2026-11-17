@@ -1,0 +1,13 @@
+# Apariencia y servidor. (Los secretos van en .streamlit/secrets.toml, que NO se sube a git.)
+[theme]
+base = "dark"
+primaryColor = "#14B8A6"
+backgroundColor = "#0B1220"
+secondaryBackgroundColor = "#111A2E"
+textColor = "#E5E7EB"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+maxUploadSize = 100

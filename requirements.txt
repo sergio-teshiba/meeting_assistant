@@ -1,5 +1,8 @@
-streamlit
-supabase
-google-genai
-SpeechRecognition
+streamlit>=1.50
+supabase>=2.0
+google-genai>=1.40
 pandas
+pypdf
+python-docx
+openpyxl
+cryptography
