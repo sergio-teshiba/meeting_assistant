@@ -1,5 +1,5 @@
 """
-app.py — Copiloto proactivo de reuniones (Streamlit + Google Gemini + Supabase).
+app.py — Agente ProActivo: copiloto de reuniones (Streamlit + Google Gemini + Supabase).
 
 Flujo: Preparar (contexto y documentos) → En vivo (captura + tarjetas proactivas)
 → Minuta (acuerdos y compromisos, exportable) → Historial.
@@ -23,7 +23,8 @@ from documents import (AUDIO_TYPES, SUPPORTED_TYPES, build_doc_parts, load_docum
                        minutes_to_docx, minutes_to_markdown)
 from gemini_core import GeminiEngine, GeminiError, LiveWorker, SessionConfig, strip_markdown
 
-st.set_page_config(page_title="Copiloto de Reuniones", page_icon="🎙️", layout="wide",
+BRAND = "Agente ProActivo"
+st.set_page_config(page_title=BRAND, page_icon=":material/graphic_eq:", layout="wide",
                    initial_sidebar_state="expanded")
 
 ss = st.session_state
@@ -34,30 +35,35 @@ live_capture = components.declare_component(
 # --------------------------------------------------------------------------
 # Catálogos
 # --------------------------------------------------------------------------
-MODES = {"oyente": "🎧 Oyente", "hablante": "🗣️ Presentador", "dinamico": "🔄 Dinámico"}
+MODES = {"oyente": "Oyente", "hablante": "Presentador", "dinamico": "Dinámico"}
 MODE_HELP = {
     "oyente": "Escuchas a otros: síntesis, tareas, datos y preguntas que podrías hacer.",
     "hablante": "Expones o diriges: argumentos de respaldo, respuestas a objeciones y agenda.",
-    "dinamico": "Alternas: el copiloto deduce si necesitas escuchar mejor o responder mejor.",
+    "dinamico": "Alternas: el agente deduce si necesitas escuchar mejor o responder mejor.",
 }
-OUTPUTS = {"escrito": "💬 Escrito en pantalla", "altavoz": "🔊 Voz por altavoz",
-           "audifonos": "🎧 Voz discreta (audífonos)"}
+OUTPUTS = {"escrito": "Escrito en pantalla", "altavoz": "Voz por altavoz",
+           "audifonos": "Voz discreta (audífonos)"}
 VOICES = {"altavoz": {"rate": 1.0, "pitch": 1.0, "volume": 1.0, "hold_mic": True},
           "audifonos": {"rate": 0.8, "pitch": 0.7, "volume": 0.6, "hold_mic": False}}
 FOCUSES = ["General / Corporativo", "Técnico / Arquitectura", "Comercial / Negociación",
            "Académico / Estratégico", "Casual / Informal", "Sentimental / Inteligencia emocional"]
 LANGS = {"es-MX": "Español (México)", "es-ES": "Español (España)", "en-US": "English (US)",
          "pt-BR": "Português (Brasil)"}
-CARDS = {  # tipo: (icono, etiqueta, color)
-    "resumen": ("🧾", "Resumen", "#3b82f6"), "tarea": ("📌", "Tarea", "#f59e0b"),
-    "respuesta": ("💬", "Respuesta sugerida", "#14b8a6"), "pregunta": ("❓", "Pregunta", "#8b5cf6"),
-    "dato": ("🔎", "Dato", "#06b6d4"), "riesgo": ("⚠️", "Riesgo", "#ef4444"),
-    "agenda": ("🗓️", "Agenda", "#64748b"), "idea": ("💡", "Idea", "#22c55e"),
-    "analisis": ("🧠", "Análisis completo", "#6366f1"), "consulta": ("🙋", "Tu pregunta", "#0ea5e9"),
+CARDS = {  # tipo: (icono Material, etiqueta, color de acento, color de etiqueta)
+    "resumen": ("summarize", "Resumen", "#60a5fa", "blue"),
+    "tarea": ("task_alt", "Tarea", "#fbbf24", "orange"),
+    "respuesta": ("forum", "Respuesta sugerida", "#2dd4bf", "green"),
+    "pregunta": ("help", "Pregunta", "#a78bfa", "violet"),
+    "dato": ("fact_check", "Dato", "#38bdf8", "blue"),
+    "riesgo": ("warning", "Riesgo", "#f87171", "red"),
+    "agenda": ("event_note", "Agenda", "#94a3b8", "gray"),
+    "idea": ("lightbulb", "Idea", "#4ade80", "green"),
+    "analisis": ("psychology", "Análisis completo", "#818cf8", "violet"),
+    "consulta": ("person", "Tu pregunta", "#38bdf8", "blue"),
 }
-SOURCES = {"mic": "🎙️ Mi micrófono (reunión presencial)",
-           "tab": "🖥️ Pestaña de la videollamada (Meet, Zoom o Teams web)",
-           "both": "🎙️ + 🖥️ Micrófono y pestaña"}
+SOURCES = {"mic": "Mi micrófono (reunión presencial)",
+           "tab": "Pestaña de la videollamada (Meet, Zoom o Teams web)",
+           "both": "Micrófono y pestaña"}
 SRC_LABEL = {"dictado": "Tú", "manual": "Nota", "audio": "Reunión", "archivo": "Grabación"}
 JOB_TEXT = "Analizando la conversación"
 JOB_AUDIO = "Escuchando el fragmento"
@@ -66,9 +72,9 @@ APP_GEMINI_KEY = db.get_secret("APP_GEMINI_API_KEY")   # llave de la casa para u
 # El resto de ajustes de monetización se editan en la pestaña «Administración».
 
 TEMPLATES = {  # plantillas por tipo de reunión: rol, enfoque, contexto y agenda sugeridos
-    "personalizada": {"label": "✏️ Personalizada"},
+    "personalizada": {"label": "Personalizada"},
     "tesis": {
-        "label": "🎓 Defensa de tesis o examen", "mode": "hablante",
+        "label": "Defensa de tesis o examen", "mode": "hablante",
         "focus": "Académico / Estratégico",
         "context": "Presento mi trabajo ante un comité evaluador. Refuerza mis argumentos con los "
                    "documentos anexos, anticipa las preguntas difíciles del jurado y sugiéreme "
@@ -76,50 +82,91 @@ TEMPLATES = {  # plantillas por tipo de reunión: rol, enfoque, contexto y agend
         "agenda": "1. Planteamiento del problema\n2. Metodología\n3. Resultados\n"
                   "4. Conclusiones\n5. Preguntas del comité"},
     "ventas": {
-        "label": "💼 Llamada de ventas", "mode": "dinamico", "focus": "Comercial / Negociación",
+        "label": "Llamada de ventas", "mode": "dinamico", "focus": "Comercial / Negociación",
         "context": "Llamada con un cliente potencial. Detecta necesidades, objeciones y señales de "
                    "compra; sugiéreme respuestas a las objeciones y la siguiente pregunta para "
                    "avanzar hacia el cierre.",
         "agenda": "1. Descubrimiento de necesidades\n2. Presentación de la solución\n"
                   "3. Objeciones\n4. Próximos pasos"},
     "negociacion": {
-        "label": "🤝 Negociación", "mode": "dinamico", "focus": "Comercial / Negociación",
+        "label": "Negociación", "mode": "dinamico", "focus": "Comercial / Negociación",
         "context": "Negociación de condiciones. Señala concesiones, compromisos y riesgos; "
                    "sugiéreme contraofertas y preguntas para entender los intereses de la otra "
                    "parte.", "agenda": ""},
     "entrevista": {
-        "label": "🧑‍💼 Entrevista de trabajo", "mode": "hablante",
+        "label": "Entrevista de trabajo", "mode": "hablante",
         "focus": "General / Corporativo",
         "context": "Soy el candidato en una entrevista. Ayúdame a responder con ejemplos concretos "
                    "(situación, acción y resultado) basados en mi CV anexo y sugiéreme preguntas "
                    "inteligentes para el entrevistador.", "agenda": ""},
     "equipo": {
-        "label": "👥 Junta de equipo o seguimiento", "mode": "oyente",
+        "label": "Junta de equipo o seguimiento", "mode": "oyente",
         "focus": "General / Corporativo",
         "context": "Junta de seguimiento del equipo. Captura acuerdos, tareas con responsable y "
                    "fecha, bloqueos y riesgos.",
         "agenda": "1. Avances\n2. Bloqueos\n3. Acuerdos y tareas"},
     "tecnica": {
-        "label": "🛠️ Revisión técnica", "mode": "dinamico", "focus": "Técnico / Arquitectura",
+        "label": "Revisión técnica", "mode": "dinamico", "focus": "Técnico / Arquitectura",
         "context": "Revisión técnica de un proyecto. Señala riesgos técnicos, dependencias, "
                    "decisiones tomadas y pendientes; verifica los datos con la documentación "
                    "anexa.", "agenda": ""},
     "clase": {
-        "label": "📚 Clase o conferencia", "mode": "oyente", "focus": "Académico / Estratégico",
+        "label": "Clase o conferencia", "mode": "oyente", "focus": "Académico / Estratégico",
         "context": "Asisto a una clase o conferencia. Resume las ideas clave, aclara conceptos y "
                    "sugiéreme preguntas para el ponente.", "agenda": ""},
 }
 
-st.markdown(
-    "<style>"
-    ".block-container{padding-top:2.4rem;padding-bottom:6rem;max-width:1380px}"
-    "[class*='st-key-card-']{border-left:4px solid #64748b !important}"
-    + "".join("[class*='st-key-card-%s-']{border-left-color:%s !important}" % (k, v[2])
-              for k, v in CARDS.items())
-    + "[class*='st-key-card-'] p{margin-bottom:.35rem}"
-    ".hero h1{font-size:2.3rem;line-height:1.15;margin-bottom:.4rem}"
-    ".hero p{font-size:1.08rem;opacity:.85}"
-    "</style>", unsafe_allow_html=True)
+st.markdown("<style>" + """
+/* ---------- base ---------- */
+.block-container{padding-top:2rem;padding-bottom:7rem;max-width:1280px}
+h1,h2,h3,h4,h5{letter-spacing:-.015em}
+[data-testid="stHeader"]{background:transparent}
+hr{margin:1rem 0 !important;opacity:.6}
+/* ---------- icono de configuración para abrir / cerrar el panel lateral ---------- */
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"]{font-size:0 !important}
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"]::before,
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"]::before{
+  font-family:"Material Symbols Rounded";font-size:1.45rem;line-height:1;
+  -webkit-font-feature-settings:"liga";font-feature-settings:"liga";content:"settings"}
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"]::before{content:"close"}
+[data-testid="stExpandSidebarButton"]{border-radius:999px}
+/* ---------- marca ---------- */
+.brand{display:flex;align-items:center;gap:.6rem;margin:0 0 .15rem}
+.brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#2dd4bf,#6366f1);color:#0b0f17;font-weight:800;font-size:.95rem}
+.brand-name{font-weight:700;font-size:1.05rem;letter-spacing:-.01em}
+.brand-sub{opacity:.55;font-size:.9rem}
+.meeting-title{font-size:1.7rem;font-weight:650;letter-spacing:-.02em;margin:.6rem 0 .35rem;line-height:1.2}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 1rem}
+.chip{font-size:.78rem;padding:.18rem .6rem;border-radius:999px;border:1px solid rgba(148,163,184,.22);
+  color:rgba(229,231,235,.78);background:rgba(148,163,184,.06)}
+/* ---------- secciones ---------- */
+.sec{font-size:.72rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;opacity:.55;
+  margin:1.1rem 0 .4rem}
+.step{display:flex;align-items:center;gap:.55rem;font-weight:600;font-size:1.02rem;margin:.2rem 0 .6rem}
+.step b{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:.75rem;
+  background:rgba(45,212,191,.14);color:#2dd4bf}
+/* ---------- pestañas ---------- */
+[data-baseweb="tab-list"]{gap:1.4rem;border-bottom:1px solid rgba(148,163,184,.14)}
+[data-baseweb="tab"]{padding-left:0 !important;padding-right:0 !important}
+[data-baseweb="tab"] p{font-size:.92rem;font-weight:500}
+[data-baseweb="tab-highlight"]{height:2px}
+/* ---------- tarjetas del agente ---------- */
+[class*="st-key-card-"]{border-left:3px solid #64748b !important;background:rgba(148,163,184,.035);
+  transition:background .2s}
+[class*="st-key-card-"]:hover{background:rgba(148,163,184,.07)}
+[class*="st-key-card-"] p{margin-bottom:.3rem}
+""" + "".join("[class*='st-key-card-%s-']{border-left-color:%s !important}" % (k, v[2])
+              for k, v in CARDS.items()) + """
+/* ---------- acceso ---------- */
+.hero h1{font-size:2.6rem;line-height:1.1;margin:.6rem 0 .8rem;letter-spacing:-.03em}
+.hero p{font-size:1.06rem;opacity:.7;line-height:1.55}
+.feat{display:flex;gap:.75rem;align-items:flex-start;margin:.9rem 0}
+.feat .ic{font-family:"Material Symbols Rounded";font-size:1.35rem;color:#2dd4bf;line-height:1.2}
+.feat b{display:block;font-weight:600}
+.feat span{opacity:.62;font-size:.93rem}
+</style>""", unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------
@@ -131,6 +178,18 @@ _MD_SPECIAL = re.compile(r"([\\`*_\[\]#<>$~|])")
 def md_escape(text: str) -> str:
     """Texto literal (transcripción, títulos): que nada se interprete como formato."""
     return _MD_SPECIAL.sub(r"\\\1", text or "")
+
+
+def section(label: str) -> None:
+    st.markdown("<div class='sec'>%s</div>" % label, unsafe_allow_html=True)
+
+
+def step(number: int, label: str) -> None:
+    st.markdown("<div class='step'><b>%d</b>%s</div>" % (number, label), unsafe_allow_html=True)
+
+
+def card_icon(tipo: str) -> str:
+    return ":material/%s:" % CARDS.get(tipo, CARDS["idea"])[0]
 
 
 def safe_md(text: str) -> str:
@@ -223,6 +282,8 @@ def current_config(user: dict) -> SessionConfig:
         use_knowledge=ss.get("cfg_knowledge", True), use_web=ss.get("cfg_web", False),
         language=ss.get("cfg_lang", "es-MX"), title=ss.get("meet_title", ""),
         context=ss.get("meet_context", ""), agenda=ss.get("meet_agenda", ""),
+        custom=ss.get("meet_custom", "") if ss.get("tpl_pick", "personalizada") == "personalizada"
+        else "",
         user_name=user["username"].split("@")[0])
 
 
@@ -356,14 +417,13 @@ def process_results(verbal: bool) -> None:
                     new_cards.append(add_card(card, result.get("model", ""), result.get("sources")))
         elif kind == "card":
             card = add_card(result["card"], result.get("model", ""), result.get("sources"))
-            icon = CARDS[card["tipo"]][0]
-            st.toast("%s Listo: %s" % (icon, card["titulo"][:60]))
+            st.toast("Listo: %s" % card["titulo"][:60], icon=card_icon(card["tipo"]))
             if result.get("speak"):
                 spoken.append(card["contenido"])
         for card in new_cards:
             spoken.append(card.get("voz") or card["titulo"])
             if card["prioridad"] == "alta":
-                st.toast("%s %s" % (CARDS[card["tipo"]][0], card["titulo"][:70]))
+                st.toast(card["titulo"][:70], icon=card_icon(card["tipo"]))
     if verbal and spoken:
         say(". ".join(spoken))
 
@@ -374,18 +434,23 @@ def process_results(verbal: bool) -> None:
 def login_screen(store, settings: dict) -> None:
     left, right = st.columns([1.15, 1], gap="large")
     with left:
+        features = [
+            ("bolt", "Proactivo", "Respuestas, datos y riesgos mientras la reunión ocurre."),
+            ("graphic_eq", "Multimodal", "Entiende audio, PDF, Word, Excel e imágenes."),
+            ("description", "Minuta lista", "Acuerdos y compromisos con responsable y fecha."),
+        ]
         st.markdown(
-            "<div class='hero'><h1>🎙️ Tu copiloto en cada reunión</h1>"
+            "<div class='hero'><div class='brand'><div class='brand-mark'>P</div>"
+            "<div class='brand-name'>%s</div></div>"
+            "<h1>El agente que te asiste en cada reunión</h1>"
             "<p>Escucha la conversación, la cruza con tus documentos y te sugiere en tiempo real "
-            "qué responder, qué preguntar y qué tareas quedaron — sin que tengas que pedirlo.</p>"
-            "</div>", unsafe_allow_html=True)
-        st.markdown(
-            "- ⚡ **Proactivo:** tarjetas con respuestas, datos y riesgos mientras hablan.\n"
-            "- 🎧 **Multimodal:** entiende audio, PDF, Word, Excel e imágenes con Gemini.\n"
-            "- 📋 **Minuta lista:** acuerdos y compromisos con responsable y fecha, en Word.")
+            "qué responder, qué preguntar y qué tareas quedaron, sin que tengas que pedirlo.</p>"
+            "</div>%s" % (BRAND, "".join(
+                "<div class='feat'><div class='ic'>%s</div><div><b>%s</b><span>%s</span></div>"
+                "</div>" % f for f in features)), unsafe_allow_html=True)
         if store.backend == "local":
             st.info("Modo local: las cuentas y reuniones se guardan en este equipo "
-                    "(configura Supabase para usarlo en la nube).", icon="🧪")
+                    "(configura Supabase para usarlo en la nube).", icon=":material/science:")
     with right:
         allow_signup = settings["allow_signup"]
         tabs = st.tabs(["Iniciar sesión", "Crear cuenta"] if allow_signup else ["Iniciar sesión"])
@@ -466,7 +531,7 @@ def api_key_panel(user: dict, engine) -> None:
         st.rerun()
 
     if engine is None:
-        st.warning("Conecta tu API key de Gemini para activar el copiloto.", icon="🔑")
+        st.warning("Conecta tu API key de Gemini para activar el agente.", icon=":material/key:")
         st.caption("Es gratuita: créala en [Google AI Studio](https://aistudio.google.com/apikey).")
         with st.form("key_form"):
             candidate = st.text_input("API key de Gemini", type="password")
@@ -475,12 +540,12 @@ def api_key_panel(user: dict, engine) -> None:
         return
     state = engine.ensure_checked()
     if state == "invalid":
-        st.error(engine.key_msg, icon="🔑")
+        st.error(engine.key_msg, icon=":material/key_off:")
     elif state == "unknown":
-        st.warning(engine.key_msg, icon="📡")
+        st.warning(engine.key_msg, icon=":material/wifi_off:")
     else:
         owner = "tu cuenta" if ss.api_key else "plan Pro"
-        st.success("Gemini conectado (%s)" % owner, icon="✅")
+        st.success("Gemini conectado (%s)" % owner, icon=":material/check_circle:")
     with st.expander("Cambiar API key"):
         with st.form("key_change_form"):
             candidate = st.text_input("Nueva API key", type="password")
@@ -497,16 +562,19 @@ def verify_payment(settings: dict) -> None:
 def plan_panel(user: dict, settings: dict) -> None:
     label = "Admin" if user["is_admin"] else {"free": "Gratis", "pro": "Pro"}.get(
         user["plan"], user["plan"].capitalize())
-    st.markdown("**👤 %s**  \n:gray[Plan %s]" % (md_escape(user["username"]), label))
+    st.markdown("<div class='brand'><div class='brand-mark'>P</div><div class='brand-name'>%s"
+                "</div></div>" % BRAND, unsafe_allow_html=True)
+    st.markdown(":material/account_circle: **%s**  \n:gray[Plan %s]"
+                % (md_escape(user["username"]), label))
     if user["is_admin"]:
         return
     auto = settings["stripe_auto"] and billing.stripe_configured()
     if user["plan"] == "free" and settings["upgrade_url"]:
-        st.link_button("⭐ Mejorar a Pro", billing.checkout_link(settings["upgrade_url"],
-                                                               user["username"]),
-                       width="stretch")
+        st.link_button("Mejorar a Pro", billing.checkout_link(settings["upgrade_url"],
+                                                             user["username"]),
+                       icon=":material/star:", width="stretch")
         if auto:
-            st.button("✅ Ya pagué: verificar", on_click=verify_payment, args=(settings,),
+            st.button("Ya pagué: verificar", icon=":material/verified:", on_click=verify_payment, args=(settings,),
                       width="stretch", help="Consulta a Stripe si tu pago ya se registró.")
     elif user["plan"] != "free" and settings["portal_url"]:
         st.link_button("Administrar mi suscripción", settings["portal_url"], width="stretch")
@@ -516,7 +584,7 @@ def plan_panel(user: dict, settings: dict) -> None:
 
 
 def password_panel(user: dict) -> None:
-    with st.expander("🔒 Cambiar contraseña"):
+    with st.expander("Cambiar contraseña", icon=":material/lock:"):
         with st.form("pwd_form", clear_on_submit=True, border=False):
             current = st.text_input("Contraseña actual", type="password",
                                     autocomplete="current-password")
@@ -536,7 +604,7 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
         api_key_panel(user, engine)
 
         st.divider()
-        st.markdown("##### 🎛️ Tu copiloto")
+        section(BRAND)
         st.radio("Tu rol en la reunión", list(MODES), format_func=MODES.get, key="cfg_mode",
                  captions=[MODE_HELP[m] for m in MODES])
         st.selectbox("Cómo te asiste", list(OUTPUTS), format_func=OUTPUTS.get, key="cfg_output",
@@ -544,21 +612,21 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
                           "Pausa o reanuda con la barra espaciadora o un toque.")
         st.selectbox("Enfoque del análisis", FOCUSES, key="cfg_focus")
 
-        st.markdown("##### 📚 Fuentes")
-        st.checkbox("📄 Documentos anexos", value=True, key="cfg_docs")
-        st.checkbox("🧠 Conocimiento del modelo", value=True, key="cfg_knowledge")
-        st.checkbox("🔍 Búsqueda web (Google)", value=False, key="cfg_web",
+        section("Fuentes")
+        st.checkbox("Documentos anexos", value=True, key="cfg_docs")
+        st.checkbox("Conocimiento del modelo", value=True, key="cfg_knowledge")
+        st.checkbox("Búsqueda web (Google)", value=False, key="cfg_web",
                     help="Verifica cifras y noticias con Google Search en «Análisis completo» y "
                          "en tus preguntas del chat. Las sugerencias automáticas no la usan, "
                          "para responder en segundos.")
 
-        st.markdown("##### ⚡ Proactividad")
+        section("Proactividad")
         st.toggle("Sugerencias automáticas", value=True, key="cfg_auto",
-                  help="El copiloto analiza la conversación por sí solo, sin que lo pidas.")
+                  help="El agente analiza la conversación por sí solo, sin que lo pidas.")
         interval = st.slider("Segundos entre análisis", 15, 120, 30, 5, key="cfg_interval")
         st.caption("≈ %d análisis por hora de reunión." % (3600 // interval))
 
-        with st.expander("⚙️ Avanzado"):
+        with st.expander("Avanzado", icon=":material/tune:"):
             st.selectbox("Idioma de la reunión", list(LANGS), format_func=LANGS.get, key="cfg_lang")
             options = ["auto"] + (engine.available if engine else [])
             if ss.get("cfg_model") not in options:
@@ -576,10 +644,10 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
         if user["is_admin"] and (store.key_kind == "publishable" or (
                 store.backend == "supabase" and not db.encryption_enabled())):
             st.warning("Hay pendientes de seguridad: revisa la pestaña «Administración».",
-                       icon="🛡️")
+                       icon=":material/shield:")
         st.divider()
         password_panel(user)
-        st.button("Cerrar sesión", on_click=logout, width="stretch")
+        st.button("Cerrar sesión", on_click=logout, width="stretch", icon=":material/logout:")
 
 
 # --------------------------------------------------------------------------
@@ -588,22 +656,26 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
 def reset_meeting() -> None:
     ss.meeting = new_meeting()
     ss.last_error = None
-    for key in ("meet_title", "meet_context", "meet_agenda"):
+    for key in ("meet_title", "meet_context", "meet_agenda", "meet_custom"):
         ss[key] = ""
 
 
+def _template_texts(field: str) -> set:
+    return {t.get(field, "") for t in TEMPLATES.values() if t.get(field)}
+
+
 def apply_template() -> None:
+    """Se ejecuta al elegir un tipo de reunión: ajusta rol, enfoque y textos sugeridos."""
     template = TEMPLATES.get(ss.get("tpl_pick", "personalizada"), {})
     if "mode" not in template:
-        return
+        return  # «Personalizada»: el usuario describe su reunión con sus propias palabras
     ss.cfg_mode, ss.cfg_focus = template["mode"], template["focus"]
-    filled = []
     for key, field in (("meet_context", "context"), ("meet_agenda", "agenda")):
-        if template.get(field) and not str(ss.get(key, "")).strip():
-            ss[key] = template[field]
-            filled.append(key)
-    ss.tpl_msg = ("Plantilla aplicada: rol y enfoque ajustados%s."
-                  % (" y contexto sugerido" if filled else " (tu contexto se conservó)"))
+        current = str(ss.get(key, "")).strip()
+        # Solo se reemplaza lo vacío o lo que venía de otra plantilla: nunca lo que escribiste.
+        if not current or current in _template_texts(field):
+            ss[key] = template.get(field, "")
+    ss.tpl_msg = "Plantilla «%s» aplicada" % template["label"]
 
 
 def prepare_tab(engine, cfg: SessionConfig) -> list:
@@ -611,16 +683,22 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
     meeting = ss.meeting
     left, right = st.columns([1.1, 1], gap="large")
     with left:
-        st.markdown("#### 1 · ¿De qué trata la reunión?")
-        pick, apply_col = st.columns([3, 1], vertical_alignment="bottom")
-        pick.selectbox("Tipo de reunión", list(TEMPLATES), key="tpl_pick",
-                       format_func=lambda k: TEMPLATES[k]["label"],
-                       help="Ajusta tu rol, el enfoque y un contexto sugerido en un clic.")
-        apply_col.button("Aplicar", on_click=apply_template, width="stretch",
-                         disabled=ss.get("tpl_pick", "personalizada") == "personalizada")
+        step(1, "¿De qué trata la reunión?")
+        st.selectbox("Tipo de reunión", list(TEMPLATES), key="tpl_pick",
+                     format_func=lambda k: TEMPLATES[k]["label"], on_change=apply_template,
+                     help="Al elegirlo se ajustan solos tu rol, el enfoque y un contexto sugerido.")
         tpl_msg = ss.pop("tpl_msg", "")
         if tpl_msg:
-            st.success(tpl_msg, icon="✨")
+            st.toast(tpl_msg, icon=":material/auto_awesome:")
+        if ss.get("tpl_pick", "personalizada") == "personalizada":
+            st.text_area(
+                "Personaliza tu reunión", key="meet_custom", height=110, max_chars=2000,
+                placeholder="Describe tu tipo de reunión y cómo quieres que te ayude el agente. "
+                            "Ej.: «Es una mesa de consejo. Avísame cuando alguien contradiga el "
+                            "plan financiero, sugiéreme respuestas breves y formales y no me "
+                            "muestres resúmenes».",
+                help="El agente seguirá estas instrucciones en las sugerencias, el análisis "
+                     "completo, el chat y la minuta.")
         st.text_input("Título", key="meet_title", placeholder="Ej. Defensa de tesis: IA en las PYMES")
         st.text_area(
             "Contexto y objetivo", key="meet_context", height=130,
@@ -630,31 +708,31 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
         st.text_area("Agenda (opcional, un punto por línea)", key="meet_agenda", height=90,
                      placeholder="1. Resultados\n2. Presupuesto\n3. Próximos pasos")
         if meeting["transcript"] or meeting["cards"]:
-            st.button("🆕 Empezar una reunión nueva", on_click=reset_meeting,
+            st.button("Empezar una reunión nueva", on_click=reset_meeting, icon=":material/add:",
                       help="Limpia la transcripción, las tarjetas y la minuta actuales.")
     with right:
-        st.markdown("#### 2 · Documentos de apoyo")
+        step(2, "Documentos de apoyo")
         files = st.file_uploader(
             "PDF, Word, Excel, CSV, TXT o imágenes", type=SUPPORTED_TYPES,
             accept_multiple_files=True, key="docs_upload",
-            help="El copiloto los usa como verdad base para verificar datos y armar argumentos.")
+            help="El agente los usa como verdad base para verificar datos y armar argumentos.")
         docs = [cached_document(f.name, f.getvalue()) for f in files or []]
         for doc in docs:
             if doc["error"]:
-                st.error("**%s** — %s" % (md_escape(doc["name"]), doc["error"]), icon="📄")
+                st.error("**%s** — %s" % (md_escape(doc["name"]), doc["error"]), icon=":material/description:")
             else:
                 size = ("%s caracteres" % format(len(doc["text"]), ",")) if doc["text"] else ""
                 detail = " · ".join(x for x in (size, doc["note"]) if x)
-                st.caption("✅ **%s** — %s" % (md_escape(doc["name"]), detail))
+                st.caption(":green[:material/check_circle:] **%s** — %s" % (md_escape(doc["name"]), detail))
         _, stats = build_doc_parts(docs)
         if stats["truncated"]:
             st.warning("Los documentos son muy extensos: se usarán los primeros %s caracteres."
-                       % format(stats["chars"], ","), icon="✂️")
+                       % format(stats["chars"], ","), icon=":material/content_cut:")
         if docs and not cfg.use_docs:
             st.info("Tienes documentos cargados pero la fuente «Documentos anexos» está apagada.")
 
-        st.markdown("#### 3 · ¿Ya tienes la grabación?")
-        with st.expander("🎧 Transcribir un audio con Gemini"):
+        step(3, "¿Ya tienes la grabación?")
+        with st.expander("Transcribir un audio con Gemini", icon=":material/headphones:"):
             upload = st.file_uploader("Audio de la reunión", type=list(AUDIO_TYPES), key="rec_upload")
             voice_note = st.audio_input("…o graba una nota de voz", key="rec_note")
             source = upload or voice_note
@@ -675,7 +753,7 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
                                    % len(result["segments"]))
             if not engine:
                 st.caption("Conecta tu API key para usar esta función.")
-    st.caption("Cuando estés listo, pasa a la pestaña **🔴 En vivo**.")
+    st.caption("Cuando estés listo, pasa a la pestaña **En vivo**.")
     return docs
 
 
@@ -683,12 +761,14 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
 # Pestaña: En vivo (fragmento que se refresca solo mientras hay actividad)
 # --------------------------------------------------------------------------
 def render_card(card: dict) -> None:
-    icon, label, _ = CARDS.get(card["tipo"], CARDS["idea"])
+    icon, label, _, color = CARDS.get(card["tipo"], CARDS["idea"])
     with st.container(border=True, key="card-%s-%s" % (card["tipo"], card["id"])):
-        badge = " :red-badge[Atención]" if card.get("prioridad") == "alta" else ""
-        st.markdown("%s **%s**%s" % (icon, md_escape(card["titulo"]), badge))
+        badge = " :red-badge[:material/priority_high: Atención]" \
+            if card.get("prioridad") == "alta" else ""
+        st.markdown(":%s-badge[:material/%s: %s]%s" % (color, icon, label, badge))
+        st.markdown("**%s**" % md_escape(card["titulo"]))
         st.markdown(card_md(card["contenido"]))
-        meta = "%s · %s" % (fmt_time(card["t"]), label)
+        meta = fmt_time(card["t"])
         if card.get("model"):
             meta += " · %s" % card["model"]
         links = " ".join("[%s](%s)" % (md_escape(s["title"][:40]), s["url"])
@@ -706,8 +786,8 @@ def live_view() -> None:
     with left:
         mode = st.radio(
             "Captura", ["dictado", "audio"], horizontal=True, key="cap_mode",
-            format_func={"dictado": "⚡ Dictado del navegador",
-                         "audio": "🎧 Audio con Gemini"}.get,
+            format_func={"dictado": ":material/mic: Dictado del navegador",
+                         "audio": ":material/graphic_eq: Audio con Gemini"}.get,
             help="**Dictado:** instantáneo y sin gastar cuota; solo escucha tu micrófono "
                  "(Chrome, Edge o Safari).\n\n**Audio con Gemini:** envía fragmentos de audio al "
                  "modelo, que transcribe distinguiendo hablantes; puede escuchar la pestaña de "
@@ -755,7 +835,7 @@ def live_view() -> None:
             submit_text_analysis(rt)
 
         total_words = word_count(meeting["transcript"])
-        st.markdown("##### 📝 Transcripción  :gray[· %s palabras]" % format(total_words, ","))
+        st.markdown("##### Transcripción  :gray[· %s palabras]" % format(total_words, ","))
         with st.container(height=320, border=True):
             if not meeting["transcript"]:
                 st.caption("Aquí aparecerá lo que se diga en la reunión. Inicia la captura o "
@@ -767,7 +847,7 @@ def live_view() -> None:
                     lines.append(":gray[%s · %s]  \n%s" % (fmt_time(seg["t"]), md_escape(who),
                                                           md_escape(seg["text"])))
                 st.markdown("\n\n".join(lines))
-        with st.expander("✍️ Escribir o pegar texto"):
+        with st.expander("Escribir o pegar texto", icon=":material/edit_note:"):
             with st.form("manual_form", clear_on_submit=True, border=False):
                 note = st.text_area("Texto", height=90, label_visibility="collapsed",
                                     placeholder="Pega notas o escribe lo que se dijo…")
@@ -777,13 +857,15 @@ def live_view() -> None:
 
     with right:
         head, act1, act2 = st.columns([1.5, 1.2, 1.6], vertical_alignment="center")
-        head.markdown("##### 💡 Sugerencias")
-        if act1.button("💬 Sugerir ahora", disabled=engine is None, width="stretch",
+        head.markdown("##### Sugerencias")
+        if act1.button("Sugerir ahora", icon=":material/bolt:", disabled=engine is None,
+                       width="stretch",
                        help="Tarjetas rápidas con lo último que se dijo, sin esperar al siguiente análisis automático."):
             if not submit_text_analysis(rt):
                 st.toast("No hay texto nuevo por analizar.")
             st.rerun()
-        if act2.button("🧠 Análisis completo", disabled=engine is None, width="stretch",
+        if act2.button("Análisis completo", icon=":material/psychology:", disabled=engine is None,
+                       width="stretch",
                        help="Resumen, argumentos, puntos críticos, preguntas y tareas a partir "
                             "de todo lo disponible. Úsalo también antes de la reunión para "
                             "prepararte."):
@@ -792,18 +874,19 @@ def live_view() -> None:
 
         if engine is None:
             st.info("Conecta tu API key de Gemini en el panel izquierdo para recibir sugerencias.",
-                    icon="🔑")
+                    icon=":material/key:")
         status = worker.status
         if status:
-            st.caption("⏳ %s" % status)
+            st.caption(":material/hourglass_top: %s" % status)
         elif cap["capturing"] and ss.get("cfg_auto", True):
-            st.caption("🟢 Copiloto atento: aparecerán tarjetas cuando detecte algo útil.")
+            st.caption(":green[:material/radio_button_checked:] Agente atento: aparecerán "
+                       "tarjetas cuando detecte algo útil.")
         error = ss.last_error
         if error:
             wait = int(ss.next_auto_at - time.time())
             retry = (" Reintento automático en %d s." % wait) if wait > 0 else ""
             (st.warning if error["kind"] in ("quota", "overloaded", "timeout") else st.error)(
-                error["message"] + retry, icon="⚠️")
+                error["message"] + retry, icon=":material/error:")
         with st.container(height=560, border=False):
             if not meeting["cards"]:
                 st.caption("Aún no hay sugerencias. Conforme avance la reunión verás aquí "
@@ -832,6 +915,7 @@ def save_meeting(user: dict, store, cfg: SessionConfig, minutes: dict | None) ->
     data = {"started_at": meeting["started_at"], "transcript": meeting["transcript"],
             "cards": meeting["cards"], "minutes": minutes,
             "config": {"mode": cfg.mode, "focus": cfg.focus, "context": cfg.context,
+                       "custom": cfg.custom,
                        "agenda": cfg.agenda}}
     try:
         store.save_meeting(user["username"], meeting["id"], title, data)
@@ -850,12 +934,13 @@ def minutes_tab(user: dict, store, engine, cfg: SessionConfig, doc_parts: list,
     has_content = bool(meeting["transcript"] or meeting["cards"])
     if not has_content:
         st.info("Aún no hay nada que resumir. Captura la reunión en «En vivo» o transcribe una "
-                "grabación en «Preparar».", icon="📋")
+                "grabación en «Preparar».", icon=":material/description:")
         return
-    st.caption("%s palabras de transcripción · %d tarjetas del copiloto"
+    st.caption("%s palabras de transcripción · %d tarjetas del agente"
                % (format(word_count(meeting["transcript"]), ","), len(meeting["cards"])))
-    label = "🔄 Regenerar minuta" if meeting["minutes"] else "📋 Generar minuta formal"
-    if st.button(label, type="primary", disabled=engine is None):
+    label = "Regenerar minuta" if meeting["minutes"] else "Generar minuta formal"
+    if st.button(label, type="primary", disabled=engine is None,
+                 icon=":material/refresh:" if meeting["minutes"] else ":material/description:"):
         allowed = True
         free_limit = settings["free_meetings_per_month"]
         if free_limit and user["plan"] == "free" and not user["is_admin"] and not meeting["saved"]:
@@ -866,7 +951,7 @@ def minutes_tab(user: dict, store, engine, cfg: SessionConfig, doc_parts: list,
             if used >= free_limit:
                 allowed = False
                 st.warning("Llegaste al límite de %d minutas al mes del plan gratuito."
-                           % free_limit, icon="⭐")
+                           % free_limit, icon=":material/star:")
                 if settings["upgrade_url"]:
                     st.link_button("Mejorar a Pro", billing.checkout_link(
                         settings["upgrade_url"], user["username"]))
@@ -922,12 +1007,12 @@ def minutes_tab(user: dict, store, engine, cfg: SessionConfig, doc_parts: list,
     date_text = fmt_time(meeting["started_at"], "%d/%m/%Y %H:%M")
     slug = re.sub(r"[^\w\-]+", "_", title.strip())[:50] or "minuta"
     b1, b2, b3, _ = st.columns([1.2, 1.2, 1.2, 3])
-    b1.download_button("⬇️ Word (.docx)", minutes_to_docx(final, date_text), slug + ".docx",
+    b1.download_button("Word (.docx)", minutes_to_docx(final, date_text), slug + ".docx",
                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml."
                             "document", width="stretch")
-    b2.download_button("⬇️ Markdown", minutes_to_markdown(final, date_text), slug + ".md",
+    b2.download_button("Markdown", minutes_to_markdown(final, date_text), slug + ".md",
                        mime="text/markdown", width="stretch")
-    if b3.button("💾 Guardar cambios", width="stretch"):
+    if b3.button("Guardar cambios", width="stretch", icon=":material/save:"):
         if save_meeting(user, store, cfg, final):
             st.toast("Minuta guardada en tu historial.")
 
@@ -946,7 +1031,7 @@ def history_tab(user: dict, store) -> None:
     rows = ss.history
     if not rows:
         st.info("Aquí verás tus reuniones guardadas. Se guardan automáticamente al generar la "
-                "minuta.", icon="🗂️")
+                "minuta.", icon=":material/history:")
         return
 
     def row_label(row: dict) -> str:
@@ -967,7 +1052,7 @@ def history_tab(user: dict, store) -> None:
     minutes = data.get("minutes")
     if minutes:
         st.markdown(safe_md(minutes_to_markdown(minutes)))
-        st.download_button("⬇️ Word (.docx)", minutes_to_docx(minutes),
+        st.download_button("Word (.docx)", minutes_to_docx(minutes),
                            "minuta_%s.docx" % chosen["id"][:8], key="hist_docx")
     else:
         st.caption("Esta reunión se guardó sin minuta.")
@@ -976,7 +1061,7 @@ def history_tab(user: dict, store) -> None:
         st.text(segments_text(transcript) or "Sin transcripción.")
     with st.expander("Eliminar esta reunión"):
         if st.checkbox("Sí, eliminar definitivamente", key="hist_confirm_%s" % chosen["id"]):
-            if st.button("🗑️ Eliminar", type="primary"):
+            if st.button("Eliminar", type="primary", icon=":material/delete:"):
                 store.delete_meeting(user["username"], chosen["id"])
                 ss.history = None
                 st.rerun()
@@ -990,7 +1075,7 @@ def admin_tab(store, settings: dict) -> None:
     if message:
         (st.success if message[0] else st.error)(message[1])
 
-    st.markdown("#### 💳 Monetización")
+    st.markdown("#### Monetización")
     configured = billing.stripe_configured()
     with st.form("admin_settings"):
         col1, col2 = st.columns(2, gap="large")
@@ -1014,9 +1099,9 @@ def admin_tab(store, settings: dict) -> None:
         prices = st.text_input("Solo estos precios activan Pro (opcional: IDs price_… separados "
                                "por coma)", value=settings["stripe_price_ids"])
         if configured:
-            st.caption("🟢 Stripe conectado (modo %s)." % (billing.stripe_mode() or "desconocido"))
+            st.caption(":green[:material/check_circle:] Stripe conectado (modo %s)." % (billing.stripe_mode() or "desconocido"))
         else:
-            st.caption("⚪ Para encender este interruptor agrega `STRIPE_SECRET_KEY` en los "
+            st.caption(":material/info: Para encender este interruptor agrega `STRIPE_SECRET_KEY` en los "
                        "Secrets de Streamlit Cloud.")
         if st.form_submit_button("Guardar ajustes", type="primary"):
             if url and not url.startswith("https://"):
@@ -1029,7 +1114,7 @@ def admin_tab(store, settings: dict) -> None:
                     "stripe_price_ids": prices.strip()})
             st.rerun()
 
-    st.markdown("#### 👥 Usuarios")
+    st.markdown("#### Usuarios")
     try:
         users = store.list_users()
     except Exception as exc:  # noqa: BLE001
@@ -1066,24 +1151,24 @@ def admin_tab(store, settings: dict) -> None:
                 ss.admin_msg = (False, "No se pudieron guardar los planes: %s" % str(exc)[:160])
             st.rerun()
 
-    st.markdown("#### 🛡️ Seguridad")
+    st.markdown("#### Seguridad")
     if store.backend == "local":
         st.info("Modo local (SQLite en este equipo). En la nube configura SUPABASE_URL y "
-                "SUPABASE_KEY.", icon="🧪")
+                "SUPABASE_KEY.", icon=":material/science:")
     elif store.key_kind == "secret":
-        st.success("Supabase usa la llave **secreta** (correcto).", icon="✅")
+        st.success("Supabase usa la llave **secreta** (correcto).", icon=":material/check_circle:")
     elif store.key_kind == "publishable":
         st.error("Supabase usa la llave **publishable** (pública). Cámbiala por la secreta "
                  "(`sb_secret_…`) en los Secrets y después ejecuta `supabase_schema.sql`.",
-                 icon="🚨")
+                 icon=":material/gpp_bad:")
     else:
-        st.warning("No se reconoce el tipo de llave de Supabase.", icon="⚠️")
+        st.warning("No se reconoce el tipo de llave de Supabase.", icon=":material/warning:")
     if db.encryption_enabled():
-        st.success("Las API keys de los usuarios se guardan cifradas.", icon="✅")
+        st.success("Las API keys de los usuarios se guardan cifradas.", icon=":material/check_circle:")
     else:
         st.warning("Las API keys se guardan sin cifrar: agrega `ENCRYPTION_KEY` en los Secrets.",
-                   icon="⚠️")
-    with st.expander("🔑 Generar una ENCRYPTION_KEY"):
+                   icon=":material/warning:")
+    with st.expander("Generar una ENCRYPTION_KEY", icon=":material/vpn_key:"):
         if db.encryption_enabled():
             st.warning("Ya tienes una ENCRYPTION_KEY. **No la reemplaces**: los usuarios tendrían "
                        "que volver a pegar su API key.")
@@ -1118,17 +1203,23 @@ if engine:
         engine = None   # la llave guardada ya no sirve: se pide una nueva en el panel
 cfg = current_config(user)
 
-st.markdown("### 🎙️ %s" % md_escape(cfg.title or "Copiloto de reuniones"))
+import html as _html
 sources_on = [name for name, on in (("Documentos", cfg.use_docs), ("Conocimiento IA", cfg.use_knowledge),
                                     ("Web", cfg.use_web)) if on]
-st.caption("%s · %s · %s · Fuentes: %s" % (MODES[cfg.mode], OUTPUTS[cfg.output], cfg.focus,
-                                          ", ".join(sources_on) or "ninguna"))
+chips = [MODES[cfg.mode], OUTPUTS[cfg.output], cfg.focus,
+         "Fuentes: " + (", ".join(sources_on) or "ninguna")]
+st.markdown(
+    "<div class='meeting-title'>%s</div><div class='chips'>%s</div>"
+    % (_html.escape(cfg.title or "Nueva reunión"),
+       "".join("<span class='chip'>%s</span>" % _html.escape(c) for c in chips)),
+    unsafe_allow_html=True)
 if not sources_on:
     st.warning("Activa al menos una fuente de información en el panel izquierdo.")
 
-tab_names = ["🧭 Preparar", "🔴 En vivo", "📋 Minuta", "🗂️ Historial"]
+tab_names = [":material/tune: Preparar", ":material/graphic_eq: En vivo",
+             ":material/description: Minuta", ":material/history: Historial"]
 if user["is_admin"]:
-    tab_names.append("⚙️ Administración")
+    tab_names.append(":material/admin_panel_settings: Administración")
 tabs = st.tabs(tab_names)
 tab_prep, tab_live, tab_minutes, tab_history = tabs[:4]
 with tab_prep:
@@ -1136,11 +1227,11 @@ with tab_prep:
 doc_parts, _ = build_doc_parts(docs)
 ss.rt = {"engine": engine, "cfg": cfg, "doc_parts": doc_parts}
 
-question = st.chat_input("Pregúntale a tu copiloto sobre la reunión o tus documentos…",
+question = st.chat_input("Pregúntale al agente sobre la reunión o tus documentos…",
                          disabled=engine is None)
 if question and engine:
     submit_question(ss.rt, question)
-    st.toast("🙋 Pregunta enviada: la respuesta aparecerá en «En vivo».")
+    st.toast("Pregunta enviada: la respuesta aparecerá en «En vivo».", icon=":material/send:")
 
 ss.polling = bool(ss.cap["capturing"] or ss.worker.busy)
 with tab_live:

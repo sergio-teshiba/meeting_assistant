@@ -38,7 +38,7 @@
 <body>
 <div id="root">
   <div class="bar">
-    <button id="main" type="button">🎙️ Iniciar</button>
+    <button id="main" type="button">Iniciar</button>
     <div class="info">
       <div id="status"><span id="dot"></span><span id="statusText">Listo</span></div>
       <div id="sub"></div>
@@ -125,11 +125,11 @@
     btn.classList.toggle("on", S.active);
     $("dot").classList.toggle("on", S.active && !S.hold);
     if (!S.active) {
-      btn.textContent = S.args.mode === "audio" ? "🎧 Iniciar escucha" : "🎙️ Iniciar dictado";
+      btn.textContent = S.args.mode === "audio" ? "Iniciar escucha" : "Iniciar dictado";
       setStatus(S.args.disabled ? "No disponible" : "Listo", idleHint());
       $("level").style.width = "0";
     } else {
-      btn.textContent = "⏹ Detener";
+      btn.textContent = "Detener";
     }
     fitHeight();
   }

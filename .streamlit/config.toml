@@ -1,10 +1,24 @@
 # Apariencia y servidor. (Los secretos van en .streamlit/secrets.toml, que NO se sube a git.)
 [theme]
 base = "dark"
-primaryColor = "#14B8A6"
-backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#111A2E"
-textColor = "#E5E7EB"
+primaryColor = "#2DD4BF"
+backgroundColor = "#0B0F17"
+secondaryBackgroundColor = "#131926"
+textColor = "#E6E8EE"
+borderColor = "#222A38"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "0.75rem"
+buttonRadius = "0.6rem"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap, sans-serif"
+headingFontWeights = [650, 600, 600, 600, 600, 600]
+
+[theme.sidebar]
+backgroundColor = "#0F141F"
+secondaryBackgroundColor = "#161D2B"
+
+[client]
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
