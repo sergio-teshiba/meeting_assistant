@@ -264,7 +264,9 @@ def classify_error(exc: BaseException) -> GeminiError:
         return GeminiError("Gemini rechazó la solicitud (parámetros o archivo no admitidos).",
                            "bad_request", detail)
     name = type(exc).__name__.lower()
-    if any(k in name for k in ("connect", "timeout", "network")) or "connection" in low \
+    if "timeout" in name or "timed out" in low or "continuationinterrupted" in name:
+        return GeminiError("Gemini tardó demasiado en responder.", "timeout", detail, retry_in=30)
+    if any(k in name for k in ("connect", "network")) or "connection" in low \
             or "timed out" in low or "name resolution" in low or "nodename" in low:
         return GeminiError("No hay conexión con Gemini. Revisa tu internet e inténtalo de nuevo.",
                            "network", detail)
@@ -295,7 +297,8 @@ OUTPUT_TEXT = {
 }
 
 
-def _sources_text(cfg: SessionConfig) -> str:
+def _sources_text(cfg: SessionConfig, web: Optional[bool] = None) -> str:
+    web = cfg.use_web if web is None else web
     lines = []
     if cfg.use_docs:
         lines.append("- Documentos anexos: son la verdad base. Cuando uses un dato de ellos, "
@@ -305,7 +308,7 @@ def _sources_text(cfg: SessionConfig) -> str:
     else:
         lines.append("- NO uses conocimiento general: si algo no está en las fuentes "
                      "permitidas, dilo explícitamente.")
-    if cfg.use_web:
+    if web:
         lines.append("- Búsqueda web (Google Search): úsala para verificar cifras, noticias o "
                      "normativa reciente.")
     return "\n".join(lines)
@@ -359,7 +362,7 @@ def live_system_prompt(cfg: SessionConfig, with_audio: bool) -> str:
         "\"titulo\": \"...\", \"contenido\": \"...\", \"prioridad\": \"alta|media|baja\", "
         "\"voz\": \"...\"}]}"
     ) % (who, MODE_TEXT.get(cfg.mode, MODE_TEXT["dinamico"]), cfg.focus,
-         OUTPUT_TEXT.get(cfg.output, OUTPUT_TEXT["escrito"]), _sources_text(cfg),
+         OUTPUT_TEXT.get(cfg.output, OUTPUT_TEXT["escrito"]), _sources_text(cfg, web=False),
          audio_rule, _common_rules(cfg))
 
 
@@ -381,11 +384,36 @@ def meeting_header(cfg: SessionConfig, minutes_elapsed: Optional[float] = None) 
 # --------------------------------------------------------------------------
 # Motor
 # --------------------------------------------------------------------------
+LIVE_TIMEOUT = 45      # s por intento en el análisis en vivo
+DEEP_TIMEOUT = 120     # s por intento en minuta, preguntas y análisis completo
+AUDIO_TIMEOUT = 300    # s para transcribir grabaciones largas
+_MAJOR_RE = re.compile(r"^gemini-(\d+)")
+
+
+def _make_client(api_key: str):
+    """
+    Cliente sin los reintentos automáticos del SDK (hasta 4 ante un 429, en silencio).
+    Si un modelo agota su cuota preferimos cambiar de inmediato al siguiente.
+    """
+    try:
+        from google.genai import types
+        options = types.HttpOptions(timeout=DEEP_TIMEOUT * 1000,
+                                    retry_options=types.HttpRetryOptions(attempts=1))
+        return genai.Client(api_key=api_key, http_options=options)
+    except Exception:  # noqa: BLE001 - SDK sin estas opciones
+        return genai.Client(api_key=api_key)
+
+
+def _supports_thinking_level(model: str) -> bool:
+    match = _MAJOR_RE.match(model)
+    return bool(match) and int(match.group(1)) >= 3
+
+
 class GeminiEngine:
     def __init__(self, api_key: str, preferred_model: str = ""):
         if not api_key:
             raise GeminiError("Falta la API key de Gemini.", "auth")
-        self.client = genai.Client(api_key=api_key)
+        self.client = _make_client(api_key)
         self.use_interactions = hasattr(self.client, "interactions")
         self.preferred_model = preferred_model
         self.available: List[str] = []       # modelos reales de la API key (si se pudo listar)
@@ -483,7 +511,8 @@ class GeminiEngine:
     # ---- llamada genérica con cambio automático de modelo ----------------
     def generate(self, parts: List[Dict[str, Any]], *, system: str = "", tier: str = "fast",
                  schema: Optional[Dict[str, Any]] = None, want_json: bool = False,
-                 web: bool = False, max_tokens: Optional[int] = None) -> GenResult:
+                 web: bool = False, max_tokens: Optional[int] = None,
+                 timeout: int = DEEP_TIMEOUT, thinking: str = "") -> GenResult:
         now = time.time()
         models = self.candidates(tier)
         ready = [m for m in models if self._cooldown.get(m, 0) <= now]
@@ -492,20 +521,36 @@ class GeminiEngine:
             raise GeminiError("Se alcanzó el límite gratuito en todos los modelos. "
                               "Reintento en ~%d s." % wait, "quota", retry_in=wait)
         last: Optional[GeminiError] = None
+        # Presupuesto total de tiempo: los errores rápidos (cuota, modelo retirado) no lo
+        # consumen, así que se prueban todos los modelos; uno lento no puede encadenarse
+        # con otro igual de lento más allá del doble del tiempo límite.
+        deadline = time.time() + 2 * timeout
         for model in ready:
+            remaining = deadline - time.time()
+            if remaining < 1:
+                break
             started = time.time()
+            level = thinking if _supports_thinking_level(model) else ""
+            attempt_timeout = min(timeout, remaining)
             try:
-                if self.use_interactions:
-                    result = self._call_interactions(model, parts, system, schema, want_json,
-                                                     web, max_tokens)
-                else:
-                    result = self._call_legacy(model, parts, system, want_json, web, max_tokens)
+                try:
+                    result = self._call(model, parts, system, schema, want_json, web,
+                                        max_tokens, attempt_timeout, level)
+                except Exception as exc:  # noqa: BLE001
+                    first = classify_error(exc)
+                    if not (level and first.kind == "bad_request"):
+                        raise
+                    # El modelo no aceptó el nivel de razonamiento: mismo modelo, sin él.
+                    result = self._call(model, parts, system, schema, want_json, web,
+                                        max_tokens, attempt_timeout, "")
             except Exception as exc:  # noqa: BLE001
                 err = classify_error(exc)
                 with self._lock:
                     self.stats["errors"] += 1
                 if err.kind in ("auth", "network"):
                     raise err
+                if err.kind == "timeout":
+                    self._cooldown[model] = time.time() + 30
                 if err.kind == "quota":
                     self._cooldown[model] = time.time() + (err.retry_in or 65)
                 elif err.kind == "not_found":
@@ -527,8 +572,15 @@ class GeminiEngine:
             return result
         raise last or GeminiError("No fue posible obtener respuesta de Gemini.")
 
+    def _call(self, model, parts, system, schema, want_json, web, max_tokens, timeout,
+              thinking) -> GenResult:
+        if self.use_interactions:
+            return self._call_interactions(model, parts, system, schema, want_json, web,
+                                           max_tokens, timeout, thinking)
+        return self._call_legacy(model, parts, system, want_json, web, max_tokens, timeout)
+
     def _call_interactions(self, model, parts, system, schema, want_json, web,
-                           max_tokens) -> GenResult:
+                           max_tokens, timeout=DEEP_TIMEOUT, thinking="") -> GenResult:
         payload: List[Dict[str, Any]] = []
         for part in parts:
             if part["kind"] == "text":
@@ -551,10 +603,15 @@ class GeminiEngine:
                                          "schema": schema}
         elif want_json:
             kwargs["response_format"] = {"type": "text", "mime_type": "application/json"}
+        generation: Dict[str, Any] = {}
         if max_tokens:
-            kwargs["generation_config"] = {"max_output_tokens": max_tokens}
+            generation["max_output_tokens"] = max_tokens
+        if thinking:
+            generation["thinking_level"] = thinking
+        if generation:
+            kwargs["generation_config"] = generation
 
-        interaction = self.client.interactions.create(**kwargs)
+        interaction = self.client.interactions.create(timeout=timeout, **kwargs)
         text = getattr(interaction, "output_text", None) or ""
         sources: List[Dict[str, str]] = []
         chunks: List[str] = []
@@ -576,7 +633,8 @@ class GeminiEngine:
                          output_tokens=int(getattr(usage, "total_output_tokens", 0) or 0),
                          sources=sources[:6])
 
-    def _call_legacy(self, model, parts, system, want_json, web, max_tokens) -> GenResult:
+    def _call_legacy(self, model, parts, system, want_json, web, max_tokens,
+                     timeout=DEEP_TIMEOUT) -> GenResult:
         """generateContent: para SDK google-genai anteriores a la Interactions API."""
         from google.genai import types
 
@@ -597,6 +655,11 @@ class GeminiEngine:
             config["response_mime_type"] = "application/json"
         if max_tokens:
             config["max_output_tokens"] = max_tokens
+        try:
+            config["http_options"] = types.HttpOptions(
+                timeout=int(timeout * 1000), retry_options=types.HttpRetryOptions(attempts=1))
+        except Exception:  # noqa: BLE001
+            pass
         response = self.client.models.generate_content(
             model=model, contents=contents, config=types.GenerateContentConfig(**config))
         text = ""
@@ -649,8 +712,11 @@ class GeminiEngine:
                                    "(úsala si ayuda a entender de qué se habla):"))
             parts.append(media_part("image", screenshot, "image/jpeg"))
 
+        # En vivo la prioridad es la velocidad: sin búsqueda web y con razonamiento bajo.
+        # La web se usa en «Análisis completo» y en las preguntas del chat.
         result = self.generate(parts, system=live_system_prompt(cfg, bool(audio)), tier="fast",
-                               schema=LIVE_SCHEMA, want_json=True, web=cfg.use_web)
+                               schema=LIVE_SCHEMA, want_json=True, web=False,
+                               timeout=LIVE_TIMEOUT, thinking="low")
         data = parse_json_loose(result.text)
         segments: List[Dict[str, str]] = []
         cards: List[Dict[str, Any]] = []
@@ -775,7 +841,8 @@ class GeminiEngine:
         else:
             part = media_part("audio", audio, mime)
         result = self.generate([text_part("Audio de la reunión:"), part], system=system,
-                               tier="deep", schema=TRANSCRIPT_SCHEMA, want_json=True)
+                               tier="deep", schema=TRANSCRIPT_SCHEMA, want_json=True,
+                               timeout=AUDIO_TIMEOUT)
         data = parse_json_loose(result.text)
         segments = []
         if isinstance(data, dict):
@@ -832,6 +899,7 @@ class LiveWorker:
         self._results: List[Dict[str, Any]] = []
         self._running = False
         self._current = ""
+        self._started = 0.0
         self.max_pending = max_pending
         self.dropped = 0
 
@@ -855,6 +923,7 @@ class LiveWorker:
                     return
                 label, fn = self._jobs.pop(0)
                 self._current = label
+                self._started = time.time()
             try:
                 result = fn() or {}
             except Exception as exc:  # noqa: BLE001
@@ -880,7 +949,8 @@ class LiveWorker:
             if not self._running:
                 return ""
             extra = " (+%d en cola)" % len(self._jobs) if self._jobs else ""
-            return (self._current or "Procesando") + extra
+            elapsed = int(time.time() - self._started) if self._started else 0
+            return "%s · %d s%s" % (self._current or "Procesando", elapsed, extra)
 
     def has(self, label: str) -> bool:
         with self._lock:

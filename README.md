@@ -11,7 +11,7 @@ preguntas clave y puntos de agenda pendientes. Al final redacta la **minuta form
 | Pestaña | Qué hace |
 |---|---|
 | 🧭 Preparar | Título, contexto, agenda, documentos (PDF, Word, Excel, CSV, TXT, imágenes) y transcripción de grabaciones |
-| 🔴 En vivo | Captura + tarjetas proactivas cada *N* segundos, "Analizar ya", "Análisis completo" y preguntas por chat |
+| 🔴 En vivo | Captura + tarjetas proactivas cada *N* segundos, "Sugerir ahora", "Análisis completo" y preguntas por chat |
 | 📋 Minuta | Resumen ejecutivo, acuerdos, compromisos (tabla editable), riesgos; descarga en .docx / .md |
 | 🗂️ Historial | Reuniones guardadas por usuario |
 

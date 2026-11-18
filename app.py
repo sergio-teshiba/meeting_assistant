@@ -547,9 +547,10 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
         st.markdown("##### 📚 Fuentes")
         st.checkbox("📄 Documentos anexos", value=True, key="cfg_docs")
         st.checkbox("🧠 Conocimiento del modelo", value=True, key="cfg_knowledge")
-        st.checkbox("🔍 Búsqueda web en vivo", value=False, key="cfg_web",
-                    help="Verifica cifras y noticias con Google Search. Cada análisis tarda un "
-                         "poco más.")
+        st.checkbox("🔍 Búsqueda web (Google)", value=False, key="cfg_web",
+                    help="Verifica cifras y noticias con Google Search en «Análisis completo» y "
+                         "en tus preguntas del chat. Las sugerencias automáticas no la usan, "
+                         "para responder en segundos.")
 
         st.markdown("##### ⚡ Proactividad")
         st.toggle("Sugerencias automáticas", value=True, key="cfg_auto",
@@ -777,8 +778,8 @@ def live_view() -> None:
     with right:
         head, act1, act2 = st.columns([1.5, 1.2, 1.6], vertical_alignment="center")
         head.markdown("##### 💡 Sugerencias")
-        if act1.button("⚡ Analizar ya", disabled=engine is None, width="stretch",
-                       help="Analiza de inmediato lo último que se dijo."):
+        if act1.button("💬 Sugerir ahora", disabled=engine is None, width="stretch",
+                       help="Tarjetas rápidas con lo último que se dijo, sin esperar al siguiente análisis automático."):
             if not submit_text_analysis(rt):
                 st.toast("No hay texto nuevo por analizar.")
             st.rerun()
@@ -794,14 +795,14 @@ def live_view() -> None:
                     icon="🔑")
         status = worker.status
         if status:
-            st.caption("⏳ %s…" % status)
+            st.caption("⏳ %s" % status)
         elif cap["capturing"] and ss.get("cfg_auto", True):
             st.caption("🟢 Copiloto atento: aparecerán tarjetas cuando detecte algo útil.")
         error = ss.last_error
         if error:
             wait = int(ss.next_auto_at - time.time())
             retry = (" Reintento automático en %d s." % wait) if wait > 0 else ""
-            (st.warning if error["kind"] in ("quota", "overloaded") else st.error)(
+            (st.warning if error["kind"] in ("quota", "overloaded", "timeout") else st.error)(
                 error["message"] + retry, icon="⚠️")
         with st.container(height=560, border=False):
             if not meeting["cards"]:
