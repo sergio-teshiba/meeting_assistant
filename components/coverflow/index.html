@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sugerencias</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block">
+<style>
+  :root { --primary: #2dd4bf; --text: #e6e8ee; --muted: #94a3b8; --card: #131926;
+          --line: rgba(148,163,184,.18); --font: Inter, "Source Sans Pro", system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--text); font-family: var(--font); }
+  .ms { font-family: "Material Symbols Rounded"; font-weight: normal; font-style: normal; line-height: 1;
+        letter-spacing: normal; text-transform: none; white-space: nowrap; direction: ltr;
+        -webkit-font-feature-settings: "liga"; font-feature-settings: "liga"; -webkit-font-smoothing: antialiased; }
+  #root { padding: 4px 0 2px; user-select: none; }
+  #stage { position: relative; height: var(--h, 400px); perspective: 1100px; overflow: hidden; }
+  .item { position: absolute; top: 50%; left: 50%; border-radius: 22px; overflow: hidden; cursor: pointer;
+          transition: transform .55s cubic-bezier(.22,.8,.26,1), width .55s cubic-bezier(.22,.8,.26,1),
+                      height .55s cubic-bezier(.22,.8,.26,1), opacity .4s, filter .4s;
+          transform-style: preserve-3d; will-change: transform; }
+  /* lateral: «píldora» con el tipo de sugerencia */
+  .pill { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+          padding: 16px 6px; gap: 10px; background: linear-gradient(180deg, var(--acc-strong), var(--acc-soft));
+          border: 1px solid var(--acc-line); border-radius: inherit; transition: opacity .35s; }
+  .pill .ms { font-size: 22px; color: var(--acc); }
+  .pill .vt { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 13px; font-weight: 650;
+              color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: calc(100% - 80px); }
+  .pill .n { font-size: 11px; font-weight: 700; color: var(--muted); }
+  .pill .new { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; background: var(--acc);
+               color: #0b0f17; font-size: 11px; font-weight: 800; display: none; place-items: center; }
+  .pill .new.on { display: grid; }
+  .item.narrow .vt { display: none; }
+  /* central: la categoría abierta con sus sugerencias */
+  .full { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 20px 24px 14px;
+          background: linear-gradient(180deg, var(--acc-soft), var(--card) 45%);
+          border: 1px solid var(--acc-line); border-radius: inherit; opacity: 0; transition: opacity .35s; }
+  .item.center { cursor: default; box-shadow: 0 24px 60px -24px rgba(0,0,0,.65); }
+  .item.center .full { opacity: 1; }
+  .item.center .pill { opacity: 0; pointer-events: none; }
+  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .head .ms { font-size: 26px; color: var(--acc); }
+  .head h3 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+  .head .count { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .list { overflow-y: auto; flex: 1; padding-right: 6px; user-select: text; }
+  .list::-webkit-scrollbar { width: 6px; } .list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 9px; }
+  .sug { padding: 12px 0; border-top: 1px solid var(--line); }
+  .sug:first-child { border-top: 0; padding-top: 2px; }
+  .sug .tags { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--acc-soft); color: var(--acc); }
+  .tag.alert { background: rgba(248,113,113,.16); color: #fca5a5; }
+  .sug .t { font-size: 15px; font-weight: 700; margin-bottom: 4px; line-height: 1.35; }
+  .sug .b { font-size: 14.5px; line-height: 1.55; opacity: .9; }
+  .sug.latest .t { font-size: 17.5px; }
+  .sug.latest .b { font-size: 16.5px; opacity: .95; }
+  .sug .b p { margin: 0 0 .5em; } .sug .b ul, .sug .b ol { margin: .2em 0 .5em; padding-left: 1.2em; }
+  .sug .b strong { color: #fff; font-weight: 650; }
+  .sug .m { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  .sug .m a { color: var(--primary); text-decoration: none; }
+  .none { color: var(--muted); font-size: 14px; line-height: 1.5; padding: 8px 0; }
+  #controls { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 10px; }
+  .nav { width: 42px; height: 42px; border-radius: 999px; border: 1px solid var(--line); background: rgba(148,163,184,.08);
+         color: var(--text); display: grid; place-items: center; cursor: pointer; transition: background .2s, opacity .2s; }
+  .nav:hover { background: rgba(148,163,184,.16); }
+  .nav:disabled { opacity: .3; cursor: default; }
+  .nav .ms { font-size: 24px; }
+  #name { font-size: 13px; color: var(--muted); min-width: 150px; text-align: center; }
+  #fs { margin-left: 8px; }
+  .head .new { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 99px; background: var(--acc);
+               color: #0b0f17; font-size: 11px; font-weight: 800; display: none; place-items: center; }
+  .head .new.on { display: grid; }
+  /* ---------- pantalla completa: las laterales también muestran su contenido ---------- */
+  #root.fs { position: fixed; inset: 0; background: #0b0f17; padding: 28px 24px 18px; display: flex; flex-direction: column; }
+  #root.fs #stage { flex: 1; height: auto; perspective: 1700px; }
+  #root.fs .item:not(.center) .pill { opacity: 0; pointer-events: none; }
+  #root.fs .item:not(.center) .full { opacity: 1; padding: 16px 16px 10px; }
+  #root.fs .item:not(.center) .head h3 { font-size: 15px; }
+  #root.fs .item:not(.center) .head .ms { font-size: 20px; }
+  #root.fs .item:not(.center) .head .count { display: none; }
+  #root.fs .item:not(.center) .sug .t { font-size: 13.5px; }
+  #root.fs .item:not(.center) .sug .b { font-size: 12.5px; line-height: 1.45; }
+  #root.fs .item:not(.center) .list { overflow: hidden; }
+  #root.fs .item.narrow .full { opacity: 0; }
+  #root.fs .item.narrow .pill { opacity: 1; }
+  #root.fs .item.center .sug.latest .t { font-size: 21px; }
+  #root.fs .item.center .sug.latest .b { font-size: 19px; }
+  #root.fs .item.center .head h3 { font-size: 22px; }
+  .flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--acc); } 100% { box-shadow: 0 0 0 14px transparent; } }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage" aria-roledescription="carrusel" aria-label="Sugerencias por tipo"></div>
+  <div id="controls">
+    <button class="nav" id="prev" type="button" aria-label="Tipo anterior"><span class="ms">chevron_left</span></button>
+    <span id="name"></span>
+    <button class="nav" id="next" type="button" aria-label="Tipo siguiente"><span class="ms">chevron_right</span></button>
+    <button class="nav" id="fs" type="button" aria-label="Pantalla completa" title="Pantalla completa (Esc para salir)"><span class="ms" id="fsIcon">fullscreen</span></button>
+  </div>
+</div>
+<script>
+(function () {
+  "use strict";
+  function post(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*"); }
+  var $ = function (id) { return document.getElementById(id); };
+  var S = { cats: [], keys: [], index: 0, current: null, els: {}, sigs: {}, seen: {}, reset: null, height: 400 };
+
+  function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function inline(t) { return t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>"); }
+  function md(text) {   // Markdown mínimo y seguro: se escapa todo antes de dar formato
+    var out = [], list = null;
+    function close() { if (list) { out.push("</" + list + ">"); list = null; } }
+    esc(text).split(/\n/).forEach(function (raw) {
+      var line = raw.trim(), m;
+      if (!line) { close(); return; }
+      if ((m = line.match(/^#{1,6}\s+(.*)$/))) { close(); out.push("<p><strong>" + inline(m[1]) + "</strong></p>"); return; }
+      if ((m = line.match(/^[-*•]\s+(.*)$/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push("<li>" + inline(m[1]) + "</li>"); return; }
+      if ((m = line.match(/^\d+[.)]\s+(.*)$/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push("<li>" + inline(m[1]) + "</li>"); return; }
+      close(); out.push("<p>" + inline(line) + "</p>");
+    });
+    close(); return out.join("");
+  }
+  function hexA(hex, a) {
+    var h = (hex || "#64748b").replace("#", ""); if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join("");
+    var n = parseInt(h, 16); return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+  }
+  function fitHeight() { if (!isFs()) post("streamlit:setFrameHeight", { height: $("root").offsetHeight + 4 }); }
+  // ---------- pantalla completa ----------
+  function parentDoc() { try { return window.parent.document; } catch (_) { return null; } }
+  function isFs() {
+    if (S.pseudo) return true;
+    if (document.fullscreenElement || document.webkitFullscreenElement) return true;
+    var pd = parentDoc(), fe = pd && (pd.fullscreenElement || pd.webkitFullscreenElement);
+    return !!(fe && window.frameElement && fe === window.frameElement);
+  }
+  // Respaldo: si el navegador no permite pantalla completa, el marco cubre toda la ventana.
+  function pseudoFs(on) {
+    var fe = window.frameElement, pd = parentDoc();
+    if (!fe || !pd) return;
+    if (on) {
+      S.saved = { style: fe.getAttribute("style") || "", overflow: pd.body.style.overflow };
+      fe.style.cssText += ";position:fixed !important;inset:0 !important;width:100vw !important;" +
+        "height:100vh !important;z-index:999999 !important;background:#0b0f17 !important;";
+      pd.body.style.overflow = "hidden";
+      S.pseudo = true;
+    } else if (S.pseudo) {
+      fe.setAttribute("style", S.saved.style); pd.body.style.overflow = S.saved.overflow;
+      S.pseudo = false;
+    }
+    onFsChange();
+  }
+  function toggleFs() {
+    if (S.pseudo) { pseudoFs(false); return; }
+    if (isFs()) {
+      var pd = parentDoc();
+      var d = document.fullscreenElement ? document : (pd || document);
+      (d.exitFullscreen || d.webkitExitFullscreen || function () {}).call(d);
+      return;
+    }
+    var target = window.frameElement || document.documentElement;
+    var req = target.requestFullscreen || target.webkitRequestFullscreen;
+    var fallback = function () { if (!isFs()) pseudoFs(true); };
+    if (!req) { fallback(); return; }
+    try {
+      var p = req.call(target);
+      if (p && p.then) p.catch(fallback); else setTimeout(fallback, 400);
+    } catch (_) { fallback(); }
+  }
+  function onFsChange() {
+    var on = isFs();
+    $("root").classList.toggle("fs", on);
+    $("fsIcon").textContent = on ? "fullscreen_exit" : "fullscreen";
+    $("fs").title = on ? "Salir de pantalla completa (Esc)" : "Pantalla completa (Esc para salir)";
+    setTimeout(function () { layout(); fitHeight(); }, 60);
+  }
+
+  // ---------- una tarjeta por tipo de sugerencia ----------
+  function build(cat) {
+    var el = document.createElement("div");
+    el.className = "item";
+    el.style.setProperty("--acc", cat.color);
+    el.style.setProperty("--acc-soft", hexA(cat.color, .14));
+    el.style.setProperty("--acc-strong", hexA(cat.color, .30));
+    el.style.setProperty("--acc-line", hexA(cat.color, .38));
+    el.innerHTML = '<div class="pill"><span class="ms">' + esc(cat.icon) + '</span><span class="new"></span>' +
+      '<span class="vt">' + esc(cat.label) + '</span><span class="n"></span></div>' +
+      '<div class="full"><div class="head"><span class="ms">' + esc(cat.icon) + "</span><h3>" + esc(cat.label) +
+      '</h3><span class="new"></span><span class="count"></span></div><div class="list"></div></div>';
+    el.addEventListener("click", function () { var i = S.keys.indexOf(cat.key); if (i !== S.index) go(i); });
+    return el;
+  }
+  function fill(el, cat) {
+    var items = cat.items || [];
+    var sig = JSON.stringify(items.map(function (s) { return [s.id, s.content.length]; }));
+    var n = items.length;
+    el.querySelector(".pill .n").textContent = n ? String(n) : "";
+    el.querySelector(".head .count").textContent = n ? (n === 1 ? "1 sugerencia" : n + " sugerencias") : "";
+    if (S.sigs[cat.key] === sig) return;
+    S.sigs[cat.key] = sig;
+    var html = items.length ? items.map(function (s, i) {
+      var tags = (i === 0 ? '<span class="tag">Más reciente</span>' : "") +
+                 (s.badge ? '<span class="tag">' + esc(s.badge) + "</span>" : "") +
+                 (s.priority === "alta" ? '<span class="tag alert">Atención</span>' : "");
+      var src = (s.sources || []).map(function (x) {
+        return '<a href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc((x.title || x.url).slice(0, 40)) + "</a>"; }).join(" · ");
+      return '<div class="sug' + (i === 0 ? " latest" : "") + '">' + (tags ? '<div class="tags">' + tags + "</div>" : "") +
+        '<div class="t">' + esc(s.title) + '</div><div class="b">' + md(s.content) + '</div><div class="m">' + esc(s.time) +
+        (src ? " · Fuentes: " + src : "") + "</div></div>";
+    }).join("") : '<div class="none">' + esc(cat.empty) + "</div>";
+    var list = el.querySelector(".list");
+    var grew = list.dataset.n !== undefined && items.length > Number(list.dataset.n);
+    list.dataset.n = String(items.length);
+    list.innerHTML = html;
+    list.scrollTop = 0;
+    if (grew) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+  }
+
+  // ---------- disposición 3D ----------
+  function layout() {
+    var fs = isFs(), W = $("stage").clientWidth || 700;
+    var H = fs ? ($("stage").clientHeight || window.innerHeight - 100) : S.height, mobile = W < 520;
+    var cw, sides, heights, gap, depth, angle;
+    if (fs) {
+      cw = Math.min(820, W * (mobile ? .86 : .4));
+      sides = mobile ? [0, 46, 26] : [0, Math.min(330, W * .19), Math.min(240, W * .13), Math.min(120, W * .06)];
+      heights = [1, .9, .8, .66]; gap = mobile ? 8 : 18; depth = [0, 90, 170, 240]; angle = 22;
+    } else {
+      cw = Math.min(560, W * (mobile ? .84 : .58));
+      sides = mobile ? [0, 44, 26] : [0, 108, 74, 46];
+      heights = [1, .86, .74, .62]; gap = mobile ? 8 : 14; depth = [0, 140, 230, 300]; angle = 38;
+    }
+    var ch = H - 20;
+    S.keys.forEach(function (key, i) {
+      var el = S.els[key], off = i - S.index, a = Math.abs(off), sign = off < 0 ? -1 : 1;
+      if (a >= sides.length) {
+        el.style.opacity = "0"; el.style.pointerEvents = "none";
+        el.style.width = sides[sides.length - 1] + "px"; el.style.height = ch * .5 + "px";
+        el.style.transform = "translate(-50%,-50%) translateX(" + sign * (W / 2 + 60) + "px)";
+        return;
+      }
+      var w = a === 0 ? cw : sides[a], h = ch * heights[a], x = 0;
+      if (a > 0) { x = cw / 2 + gap; for (var k = 1; k < a; k++) x += sides[k] + gap; x += w / 2; x *= sign; }
+      el.classList.toggle("center", a === 0);
+      el.classList.toggle("narrow", fs ? (a >= 3 || mobile && a >= 1) : (a >= 3 || (mobile && a >= 1)));
+      el.style.width = w + "px"; el.style.height = h + "px";
+      el.style.opacity = a === 0 ? "1" : String(1 - a * .14);
+      el.style.pointerEvents = "auto"; el.style.zIndex = String(100 - a);
+      el.style.filter = a === 0 ? "none" : "saturate(" + (1 - a * .15) + ")";
+      el.style.transform = "translate(-50%,-50%) translateX(" + x + "px) translateZ(" + (-depth[a]) + "px) rotateY(" +
+                           (a === 0 ? 0 : -sign * angle) + "deg)";
+    });
+    var cat = S.cats[S.index];
+    if (cat) S.seen[cat.key] = (cat.items || []).length;   // lo que está al centro ya se vio
+    S.cats.forEach(function (c) {
+      var fresh = Math.max(0, (c.items || []).length - (S.seen[c.key] || 0));
+      S.els[c.key].querySelectorAll(".new").forEach(function (badge) {
+        badge.textContent = fresh ? "+" + fresh : ""; badge.classList.toggle("on", fresh > 0);
+      });
+    });
+    $("prev").disabled = S.index <= 0; $("next").disabled = S.index >= S.keys.length - 1;
+    $("name").textContent = cat ? cat.label + " · " + (S.index + 1) + " / " + S.keys.length : "";
+  }
+  function go(i) {
+    if (!S.keys.length) return;
+    S.index = Math.max(0, Math.min(S.keys.length - 1, i));
+    S.current = S.keys[S.index];
+    layout();
+  }
+
+  // ---------- datos desde Python ----------
+  function render(args) {
+    var cats = args.categories || [];
+    S.height = args.height || 400;
+    $("stage").style.setProperty("--h", S.height + "px");
+    if (S.reset !== args.reset) {          // reunión nueva: se vuelve al tipo por defecto
+      S.reset = args.reset; S.current = null; S.seen = {};
+    }
+    var keep = {};
+    cats.forEach(function (c) {
+      keep[c.key] = true;
+      if (!S.els[c.key]) { S.els[c.key] = build(c); $("stage").appendChild(S.els[c.key]); }
+      fill(S.els[c.key], c);
+    });
+    Object.keys(S.els).forEach(function (k) { if (!keep[k]) { S.els[k].remove(); delete S.els[k]; delete S.sigs[k]; } });
+    S.cats = cats; S.keys = cats.map(function (c) { return c.key; });
+    var at = S.keys.indexOf(S.current);
+    if (at < 0) at = S.keys.indexOf(args.start_type);
+    if (at < 0) at = 0;
+    S.index = at; S.current = S.keys[at];
+    layout(); fitHeight();
+  }
+
+  $("fs").addEventListener("click", toggleFs);
+  ["fullscreenchange", "webkitfullscreenchange"].forEach(function (ev) {
+    document.addEventListener(ev, onFsChange);
+    var pd = parentDoc(); if (pd) pd.addEventListener(ev, onFsChange);
+  });
+  $("prev").addEventListener("click", function () { go(S.index - 1); });
+  $("next").addEventListener("click", function () { go(S.index + 1); });
+  function onKey(e) {
+    if (e.key === "Escape" && S.pseudo) { e.preventDefault(); pseudoFs(false); return; }
+    var tag = (e.target && e.target.tagName) || "";
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (e.target && e.target.isContentEditable)) return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(S.index - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(S.index + 1); }
+  }
+  document.addEventListener("keydown", onKey);
+  try { window.parent.document.addEventListener("keydown", onKey); } catch (_) {}
+  var touchX = null;
+  $("stage").addEventListener("touchstart", function (e) { touchX = e.touches[0].clientX; }, { passive: true });
+  $("stage").addEventListener("touchend", function (e) {
+    if (touchX === null) return; var dx = e.changedTouches[0].clientX - touchX; touchX = null;
+    if (Math.abs(dx) > 40) go(S.index + (dx < 0 ? 1 : -1));
+  });
+  var wheelLock = 0;
+  $("stage").addEventListener("wheel", function (e) {
+    if (Math.abs(e.deltaX) < 25 || Math.abs(e.deltaX) < Math.abs(e.deltaY)) return;
+    var now = Date.now(); if (now - wheelLock < 350) return; wheelLock = now;
+    e.preventDefault(); go(S.index + (e.deltaX > 0 ? 1 : -1));
+  }, { passive: false });
+  window.addEventListener("resize", layout);
+  window.addEventListener("message", function (event) {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    var t = event.data.theme;
+    if (t) {
+      var css = document.documentElement.style;
+      if (t.primaryColor) css.setProperty("--primary", t.primaryColor);
+      if (t.textColor) css.setProperty("--text", t.textColor);
+      if (t.secondaryBackgroundColor) css.setProperty("--card", t.secondaryBackgroundColor);
+      if (t.font) css.setProperty("--font", t.font);
+    }
+    render(event.data.args || {});
+  });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeight);
+  post("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

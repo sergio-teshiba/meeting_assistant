@@ -31,6 +31,8 @@ ss = st.session_state
 BASE_DIR = Path(__file__).parent
 live_capture = components.declare_component(
     "live_capture", path=str(BASE_DIR / "components" / "live_capture"))
+coverflow = components.declare_component(
+    "coverflow", path=str(BASE_DIR / "components" / "coverflow"))
 
 # --------------------------------------------------------------------------
 # Catálogos
@@ -62,17 +64,6 @@ CARDS = {  # tipo: (icono Material, etiqueta, color de acento, color de etiqueta
     "consulta": ("person", "Tu pregunta", "#38bdf8", "blue"),
 }
 CARD_ORDER = ["respuesta", "pregunta", "dato", "riesgo", "tarea", "idea", "agenda", "resumen"]
-# Prioridad para elegir la tarjeta destacada («Ahora»): lo que pediste y lo que hay que decir ya.
-SPOT_RANK = ["consulta", "respuesta", "pregunta", "riesgo", "dato", "tarea", "idea", "agenda",
-             "resumen", "analisis"]
-GROUPS = {
-    "todo": ("Todo", None),
-    "responder": ("Responder", {"respuesta", "pregunta", "consulta"}),
-    "datos": ("Datos", {"dato", "idea", "analisis"}),
-    "tareas": ("Tareas", {"tarea", "agenda"}),
-    "riesgos": ("Riesgos", {"riesgo"}),
-    "resumenes": ("Resúmenes", {"resumen"}),
-}
 SOURCES = {"mic": "Mi micrófono (reunión presencial)",
            "tab": "Pestaña de la videollamada (Meet, Zoom o Teams web)",
            "both": "Micrófono y pestaña"}
@@ -171,16 +162,6 @@ hr{margin:1rem 0 !important;opacity:.6}
 [class*="st-key-card-"] p{margin-bottom:.3rem}
 """ + "".join("[class*='st-key-card-%s-']{border-left-color:%s !important}" % (k, v[2])
               for k, v in CARDS.items()) + """
-/* ---------- tarjeta destacada («Ahora») ---------- */
-[class*="st-key-spot-"]{border:1px solid rgba(45,212,191,.35) !important;
-  background:linear-gradient(180deg,rgba(45,212,191,.08),rgba(45,212,191,.02)) !important}
-[class*="st-key-spot-"] p{font-size:1.12rem;line-height:1.55}
-[class*="st-key-spot-"] [data-testid="stCaptionContainer"] p{font-size:.8rem}
-.now{font-size:.72rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#2dd4bf;
-  display:flex;align-items:center;gap:.4rem;margin:.2rem 0 .4rem}
-.now i{width:8px;height:8px;border-radius:99px;background:#2dd4bf;display:inline-block;
-  animation:pulse 1.6s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 /* ---------- acceso ---------- */
 .hero h1{font-size:2.6rem;line-height:1.1;margin:.6rem 0 .8rem;letter-spacing:-.03em}
 .hero p{font-size:1.06rem;opacity:.7;line-height:1.55}
@@ -684,7 +665,6 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
 def reset_meeting() -> None:
     ss.meeting = new_meeting()
     ss.last_error = None
-    ss.pin_id, ss.feed_freeze = None, None
     for key in ("meet_title", "meet_context", "meet_agenda", "meet_custom"):
         ss[key] = ""
 
@@ -797,90 +777,47 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
 # --------------------------------------------------------------------------
 # Pestaña: En vivo (fragmento que se refresca solo mientras hay actividad)
 # --------------------------------------------------------------------------
-def render_card(card: dict, spotlight: bool = False) -> None:
-    icon, label, _, color = CARDS.get(card["tipo"], CARDS["idea"])
-    prefix = "spot" if spotlight else "card"
-    with st.container(border=True, key="%s-%s-%s" % (prefix, card["tipo"], card["id"])):
-        badge = " :red-badge[:material/priority_high: Atención]" \
-            if card.get("prioridad") == "alta" else ""
-        st.markdown(":%s-badge[:material/%s: %s]%s" % (color, icon, label, badge))
-        st.markdown("**%s**" % md_escape(card["titulo"]))
-        st.markdown(card_md(card["contenido"]))
-        meta = fmt_time(card["t"])
-        if card.get("model"):
-            meta += " · %s" % card["model"]
-        links = " ".join("[%s](%s)" % (md_escape(s["title"][:40]), s["url"])
-                         for s in card.get("sources") or [])
-        st.caption(meta + ((" · Fuentes: " + links) if links else ""))
-        if spotlight:
-            pinned = ss.get("pin_id") == card["id"]
-            st.button("Soltar" if pinned else "Fijar aquí", key="pin-%s" % card["id"],
-                      icon=":material/keep_off:" if pinned else ":material/keep:",
-                      on_click=toggle_pin, args=(card["id"],),
-                      help="Una tarjeta fijada se queda aquí aunque lleguen sugerencias nuevas.")
-
-
-def toggle_pin(card_id: str) -> None:
-    ss.pin_id = None if ss.get("pin_id") == card_id else card_id
-
-
-def pick_spotlight(cards: list) -> dict | None:
-    """La tarjeta más útil del último análisis (o la que fijaste)."""
-    if not cards:
-        return None
-    pinned = next((c for c in cards if c["id"] == ss.get("pin_id")), None)
-    if pinned:
-        return pinned
-    last = cards[-1].get("batch")
-    latest = [c for c in cards if c.get("batch") == last and c["tipo"] != "analisis"] \
-        or [cards[-1]]
-
-    def rank(card):
-        tipo = card["tipo"]
-        return (card.get("prioridad") != "alta",
-                SPOT_RANK.index(tipo) if tipo in SPOT_RANK else 99)
-
-    return sorted(latest, key=rank)[0]
-
-
-def toggle_feed_pause() -> None:
-    ss.feed_freeze = None if ss.get("feed_freeze") is not None else len(ss.meeting["cards"])
+# Dónde aparece cada tarjeta en el carrusel: las respuestas a tus preguntas van con las
+# respuestas sugeridas y el «Análisis completo» con los resúmenes.
+CAROUSEL_HOME = {"consulta": "respuesta", "analisis": "resumen"}
+# Orden de izquierda a derecha: «Respuesta sugerida» queda a la mitad para tener tipos a ambos lados.
+CAROUSEL_ORDER = ["tarea", "idea", "pregunta", "respuesta", "dato", "riesgo", "agenda", "resumen"]
+CAROUSEL_EMPTY = {
+    "respuesta": "Aquí aparecerá qué responder cuando alguien te pregunte u objete algo, y las "
+                 "respuestas a lo que le preguntes al agente en el chat.",
+    "pregunta": "Aquí aparecerán preguntas inteligentes que conviene hacer en este momento.",
+    "dato": "Aquí aparecerán cifras, definiciones y datos verificados con tus documentos.",
+    "riesgo": "Aquí aparecerán riesgos, inconsistencias o contradicciones detectadas.",
+    "tarea": "Aquí aparecerán los compromisos detectados: quién, qué y para cuándo.",
+    "idea": "Aquí aparecerán argumentos de apoyo y oportunidades.",
+    "agenda": "Aquí aparecerán los puntos de la agenda que faltan por cubrir.",
+    "resumen": "Aquí aparecerán resúmenes de lo discutido y tus análisis completos.",
+}
 
 
 def suggestions_panel(meeting: dict) -> None:
-    all_cards = meeting["cards"]
-    frozen = ss.get("feed_freeze")
-    visible = all_cards[:frozen] if frozen is not None else all_cards
-    pending = len(all_cards) - len(visible)
-    if not all_cards:
-        st.caption("Aún no hay sugerencias. Conforme avance la reunión verás aquí la más "
-                   "importante en grande y el resto ordenado por tipo.")
-        return
-
-    head, pause = st.columns([3, 1.4], vertical_alignment="center")
-    head.markdown("<div class='now'><i></i>Ahora</div>" if frozen is None else
-                  "<div class='now'>En pausa</div>", unsafe_allow_html=True)
-    pause.button("Reanudar (%d nuevas)" % pending if frozen is not None else "Pausar",
-                 icon=":material/play_arrow:" if frozen is not None else ":material/pause:",
-                 on_click=toggle_feed_pause, width="stretch", key="feed_pause",
-                 help="Congela la vista para leer con calma; las sugerencias nuevas se guardan "
-                      "y aparecen al reanudar.")
-    spot = pick_spotlight(visible)
-    if spot:
-        render_card(spot, spotlight=True)
-
-    rest = [c for c in visible if not spot or c["id"] != spot["id"]]
-    if not rest:
-        return
-    group = st.segmented_control("Anteriores", list(GROUPS), key="feed_group", default="todo",
-                                 format_func=lambda g: GROUPS[g][0], width="stretch")
-    types = GROUPS.get(group or "todo", GROUPS["todo"])[1]
-    shown = [c for c in rest if types is None or c["tipo"] in types]
-    with st.container(height=360, border=False):
-        if not shown:
-            st.caption("No hay sugerencias de este tipo todavía.")
-        for card in reversed(shown[-40:]):
-            render_card(card)
+    chosen = [t for t in CARD_ORDER if t in (ss.get("cfg_types") or CARD_ORDER)] or list(CARD_ORDER)
+    for always in ("respuesta", "resumen"):   # destino de tus preguntas y del análisis completo
+        if always not in chosen:
+            chosen.append(always)
+    chosen = [t for t in CAROUSEL_ORDER if t in chosen]
+    buckets = {t: [] for t in chosen}
+    for card in reversed(meeting["cards"]):               # la más reciente primero
+        home = CAROUSEL_HOME.get(card["tipo"], card["tipo"])
+        if home in buckets and len(buckets[home]) < 25:
+            badge = CARDS[card["tipo"]][1] if card["tipo"] in CAROUSEL_HOME else ""
+            buckets[home].append({
+                "id": card["id"], "title": card["titulo"], "content": card["contenido"],
+                "priority": card.get("prioridad", "media"), "time": fmt_time(card["t"]),
+                "badge": badge, "sources": card.get("sources") or []})
+    categories = [{"key": t, "label": CARDS[t][1], "icon": CARDS[t][0], "color": CARDS[t][2],
+                   "empty": CAROUSEL_EMPTY[t], "items": buckets[t]} for t in chosen]
+    # «default» es un nombre reservado de los componentes: el tipo inicial va como start_type.
+    coverflow(categories=categories, start_type="respuesta", height=420, reset=meeting["id"],
+              key="coverflow")
+    st.caption(":material/keyboard: Cambia de tipo con ← → del teclado, deslizando o con un clic "
+               "en las tarjetas laterales. El número sobre cada tipo indica sugerencias nuevas. "
+               "Usa :material/fullscreen: para verlo en pantalla completa (Esc para salir).")
 
 
 def live_view() -> None:
