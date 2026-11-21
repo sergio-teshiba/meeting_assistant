@@ -71,7 +71,7 @@
   var SILENCE_RMS = 0.006;      // por debajo de esto un fragmento se considera silencio
   var S = {
     args: { mode: "dictado", lang: "es-MX", chunk_seconds: 30, source: "mic", voice: {} },
-    sid: Math.random().toString(36).slice(2, 10),
+    sid: Math.random().toString(36).slice(2, 10), netFails: 0,
     seq: 0, active: false, mode: null,
     segs: [], segN: 0,                 // dictado: segmentos finales
     pending: [], audioN: 0,            // audio: fragmentos aún no confirmados por Python
@@ -149,7 +149,15 @@
     if (!SR) { showError("Tu navegador no tiene dictado integrado. Usa Chrome, Edge o Safari, o cambia a «Audio con Gemini»."); return; }
     var r = new SR();
     r.lang = S.args.lang; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+    var recovered = function () {   // volvió a llegar audio: se limpia cualquier aviso
+      if (S.netFails || S.error) {
+        S.netFails = 0; showError("");
+        setStatus("Escuchando…", "Habla con normalidad; el texto aparece al terminar cada frase");
+      }
+    };
+    r.onaudiostart = recovered;
     r.onresult = function (e) {
+      recovered();
       var interim = "";
       for (var i = e.resultIndex; i < e.results.length; i++) {
         var res = e.results[i];
@@ -164,11 +172,23 @@
       if (e.error === "no-speech" || e.error === "aborted") return;
       if (e.error === "not-allowed" || e.error === "service-not-allowed") { stop(); showError(humanError({ name: "NotAllowedError" })); }
       else if (e.error === "audio-capture") { stop(); showError(humanError({ name: "NotFoundError" })); }
-      else if (e.error === "network") { showError("El dictado del navegador perdió conexión; reintentando…"); }
+      else if (e.error === "network") {
+        // El dictado de Chrome usa los servidores de Google y a veces se corta unos segundos.
+        // Se reconecta solo y en silencio; solo se avisa si falla muchas veces seguidas.
+        S.netFails = (S.netFails || 0) + 1;
+        $("sub").textContent = "Reconectando el dictado…";
+        if (S.netFails >= 6) {
+          showError("El dictado del navegador no logra conectarse con el servicio de voz. Revisa tu " +
+                    "internet o cambia a «Audio con Gemini», que no depende de él.");
+        }
+      }
     };
     r.onend = function () {  // Chrome corta tras unos segundos de silencio: reanudamos solos
       if (S.active && S.mode === "dictado" && S.recognition === r && !S.hold) {
-        setTimeout(function () { try { r.start(); } catch (_) {} }, 250);
+        var wait = S.netFails ? Math.min(8000, 500 * Math.pow(2, S.netFails)) : 250;
+        setTimeout(function () {
+          if (S.active && S.recognition === r) { try { r.start(); } catch (_) {} }
+        }, wait);
       }
     };
     try { r.start(); } catch (err) { showError(humanError(err)); return; }

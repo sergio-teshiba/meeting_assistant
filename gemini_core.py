@@ -140,6 +140,7 @@ class SessionConfig:
     agenda: str = ""
     user_name: str = ""
     custom: str = ""                # instrucciones libres del usuario (tipo «Personalizada»)
+    card_types: tuple = ()          # tipos de tarjeta que quiere ver (vacío = todos)
 
 
 @dataclass
@@ -329,6 +330,24 @@ def _common_rules(cfg: SessionConfig) -> str:
     return rules
 
 
+CARD_HELP = {
+    "respuesta": "qué puede decir el usuario ante una pregunta u objeción",
+    "pregunta": "pregunta estratégica que conviene hacer ahora",
+    "dato": "cifra, definición o verificación de un hecho, con su fuente",
+    "riesgo": "riesgo, inconsistencia o contradicción con los documentos",
+    "tarea": "compromiso detectado; indica responsable, acción y fecha",
+    "idea": "argumento de apoyo u oportunidad",
+    "agenda": "punto de agenda pendiente o desvío del objetivo",
+    "resumen": "síntesis relámpago de lo discutido (solo si pasaron 3 minutos o más desde el "
+               "último resumen, o si cambió el tema)",
+}
+
+
+def allowed_types(cfg: SessionConfig) -> List[str]:
+    chosen = [t for t in (cfg.card_types or ()) if t in CARD_HELP]
+    return chosen or list(CARD_HELP)
+
+
 def live_system_prompt(cfg: SessionConfig, with_audio: bool) -> str:
     who = cfg.user_name or "el usuario"
     audio_rule = (
@@ -344,19 +363,11 @@ def live_system_prompt(cfg: SessionConfig, with_audio: bool) -> str:
         "ENFOQUE DEL ANÁLISIS → %s\n"
         "MODALIDAD → %s\n\n"
         "FUENTES PERMITIDAS:\n%s\n\n"
-        "TIPOS DE TARJETA:\n"
-        "- resumen: síntesis relámpago de lo discutido (solo si pasaron 3 minutos o más desde "
-        "el último resumen, o si cambió el tema).\n"
-        "- tarea: compromiso detectado; indica responsable, acción y fecha.\n"
-        "- respuesta: qué puede decir el usuario ante una pregunta u objeción.\n"
-        "- pregunta: pregunta estratégica que conviene hacer ahora.\n"
-        "- dato: cifra, definición o verificación de un hecho, con su fuente.\n"
-        "- riesgo: riesgo, inconsistencia o contradicción con los documentos.\n"
-        "- agenda: punto de agenda pendiente o desvío del objetivo.\n"
-        "- idea: argumento de apoyo u oportunidad.\n\n"
+        "TIPOS DE TARJETA PERMITIDOS (usa SOLO estos):\n%s\n\n"
         "%s"
-        "- Máximo 3 tarjetas por turno, de mayor a menor utilidad; cada una legible en 5 "
-        "segundos (máximo 60 palabras en \"contenido\").\n"
+        "- Máximo 2 tarjetas por turno, la más útil primero; cada una legible en 5 segundos "
+        "(máximo 45 palabras en \"contenido\"). Menos es más: el usuario está en plena "
+        "reunión.\n"
         "- No repitas lo que ya dicen las tarjetas emitidas. Si no hay nada nuevo que valga la "
         "pena, devuelve \"tarjetas\": [].\n"
         "- \"prioridad\": alta solo si requiere acción o atención inmediata.\n"
@@ -368,6 +379,7 @@ def live_system_prompt(cfg: SessionConfig, with_audio: bool) -> str:
         "\"voz\": \"...\"}]}"
     ) % (who, MODE_TEXT.get(cfg.mode, MODE_TEXT["dinamico"]), cfg.focus,
          OUTPUT_TEXT.get(cfg.output, OUTPUT_TEXT["escrito"]), _sources_text(cfg, web=False),
+         "\n".join("- %s: %s" % (t, CARD_HELP[t]) for t in allowed_types(cfg)),
          audio_rule, _common_rules(cfg))
 
 
@@ -730,10 +742,13 @@ class GeminiEngine:
                 if isinstance(seg, dict) and str(seg.get("texto", "")).strip():
                     segments.append({"speaker": str(seg.get("hablante", "")).strip(),
                                      "text": str(seg["texto"]).strip()})
+            permitted = set(allowed_types(cfg))
             for card in (data.get("tarjetas") or [])[:3]:
                 if not isinstance(card, dict) or not str(card.get("contenido", "")).strip():
                     continue
                 tipo = str(card.get("tipo", "idea")).lower().strip()
+                if tipo not in permitted:
+                    continue
                 prioridad = str(card.get("prioridad", "media")).lower().strip()
                 cards.append({
                     "tipo": tipo if tipo in CARD_TYPES else "idea",

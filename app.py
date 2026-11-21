@@ -61,6 +61,18 @@ CARDS = {  # tipo: (icono Material, etiqueta, color de acento, color de etiqueta
     "analisis": ("psychology", "Análisis completo", "#818cf8", "violet"),
     "consulta": ("person", "Tu pregunta", "#38bdf8", "blue"),
 }
+CARD_ORDER = ["respuesta", "pregunta", "dato", "riesgo", "tarea", "idea", "agenda", "resumen"]
+# Prioridad para elegir la tarjeta destacada («Ahora»): lo que pediste y lo que hay que decir ya.
+SPOT_RANK = ["consulta", "respuesta", "pregunta", "riesgo", "dato", "tarea", "idea", "agenda",
+             "resumen", "analisis"]
+GROUPS = {
+    "todo": ("Todo", None),
+    "responder": ("Responder", {"respuesta", "pregunta", "consulta"}),
+    "datos": ("Datos", {"dato", "idea", "analisis"}),
+    "tareas": ("Tareas", {"tarea", "agenda"}),
+    "riesgos": ("Riesgos", {"riesgo"}),
+    "resumenes": ("Resúmenes", {"resumen"}),
+}
 SOURCES = {"mic": "Mi micrófono (reunión presencial)",
            "tab": "Pestaña de la videollamada (Meet, Zoom o Teams web)",
            "both": "Micrófono y pestaña"}
@@ -159,6 +171,16 @@ hr{margin:1rem 0 !important;opacity:.6}
 [class*="st-key-card-"] p{margin-bottom:.3rem}
 """ + "".join("[class*='st-key-card-%s-']{border-left-color:%s !important}" % (k, v[2])
               for k, v in CARDS.items()) + """
+/* ---------- tarjeta destacada («Ahora») ---------- */
+[class*="st-key-spot-"]{border:1px solid rgba(45,212,191,.35) !important;
+  background:linear-gradient(180deg,rgba(45,212,191,.08),rgba(45,212,191,.02)) !important}
+[class*="st-key-spot-"] p{font-size:1.12rem;line-height:1.55}
+[class*="st-key-spot-"] [data-testid="stCaptionContainer"] p{font-size:.8rem}
+.now{font-size:.72rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#2dd4bf;
+  display:flex;align-items:center;gap:.4rem;margin:.2rem 0 .4rem}
+.now i{width:8px;height:8px;border-radius:99px;background:#2dd4bf;display:inline-block;
+  animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 /* ---------- acceso ---------- */
 .hero h1{font-size:2.6rem;line-height:1.1;margin:.6rem 0 .8rem;letter-spacing:-.03em}
 .hero p{font-size:1.06rem;opacity:.7;line-height:1.55}
@@ -259,8 +281,9 @@ def add_segment(text: str, speaker: str = "", source: str = "dictado") -> None:
             {"t": time.time(), "speaker": speaker, "text": text, "src": source})
 
 
-def add_card(card: dict, model: str = "", sources: list | None = None) -> dict:
-    card = dict(card, id=uuid.uuid4().hex[:8], t=time.time(), model=model, sources=sources or [])
+def add_card(card: dict, model: str = "", sources: list | None = None, batch: str = "") -> dict:
+    card = dict(card, id=uuid.uuid4().hex[:8], t=time.time(), model=model, sources=sources or [],
+                batch=batch or uuid.uuid4().hex[:8])
     ss.meeting["cards"].append(card)
     if card["tipo"] == "resumen":
         ss.meeting["last_summary"] = card["t"]
@@ -284,6 +307,7 @@ def current_config(user: dict) -> SessionConfig:
         context=ss.get("meet_context", ""), agenda=ss.get("meet_agenda", ""),
         custom=ss.get("meet_custom", "") if ss.get("tpl_pick", "personalizada") == "personalizada"
         else "",
+        card_types=tuple(ss.get("cfg_types") or ()),
         user_name=user["username"].split("@")[0])
 
 
@@ -403,6 +427,7 @@ def process_results(verbal: bool) -> None:
             continue  # resultado de una reunión que ya se cerró
         ss.last_error = None
         new_cards = []
+        batch = uuid.uuid4().hex[:8]
         if kind == "live":
             if result.get("from_audio"):
                 caught_up = meeting["analyzed"] == len(meeting["transcript"])
@@ -414,7 +439,8 @@ def process_results(verbal: bool) -> None:
                 meeting["analyzed"] = max(meeting["analyzed"], result.get("upto", 0))
             if result.get("keep_cards", True):
                 for card in result["cards"]:
-                    new_cards.append(add_card(card, result.get("model", ""), result.get("sources")))
+                    new_cards.append(add_card(card, result.get("model", ""), result.get("sources"),
+                                              batch=batch))
         elif kind == "card":
             card = add_card(result["card"], result.get("model", ""), result.get("sources"))
             st.toast("Listo: %s" % card["titulo"][:60], icon=card_icon(card["tipo"]))
@@ -605,12 +631,14 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
 
         st.divider()
         section(BRAND)
-        st.radio("Tu rol en la reunión", list(MODES), format_func=MODES.get, key="cfg_mode",
-                 captions=[MODE_HELP[m] for m in MODES])
         st.selectbox("Cómo te asiste", list(OUTPUTS), format_func=OUTPUTS.get, key="cfg_output",
                      help="La voz se activa al iniciar la captura en la pestaña «En vivo». "
                           "Pausa o reanuda con la barra espaciadora o un toque.")
-        st.selectbox("Enfoque del análisis", FOCUSES, key="cfg_focus")
+        st.pills("Sugerencias que quieres ver", list(CARD_ORDER), selection_mode="multi",
+                 key="cfg_types", default=list(CARD_ORDER),
+                 format_func=lambda t: CARDS[t][1],
+                 help="Menos tipos = menos ruido durante la reunión. El agente solo generará "
+                      "los tipos que elijas.")
 
         section("Fuentes")
         st.checkbox("Documentos anexos", value=True, key="cfg_docs")
@@ -656,6 +684,7 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
 def reset_meeting() -> None:
     ss.meeting = new_meeting()
     ss.last_error = None
+    ss.pin_id, ss.feed_freeze = None, None
     for key in ("meet_title", "meet_context", "meet_agenda", "meet_custom"):
         ss[key] = ""
 
@@ -699,6 +728,14 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
                             "muestres resúmenes».",
                 help="El agente seguirá estas instrucciones en las sugerencias, el análisis "
                      "completo, el chat y la minuta.")
+        rol_col, focus_col = st.columns([1.25, 1])
+        rol_col.radio("Tu rol", list(MODES), format_func=MODES.get, key="cfg_mode",
+                      horizontal=True, help="\n\n".join("**%s:** %s" % (MODES[m], MODE_HELP[m])
+                                                         for m in MODES))
+        focus_col.selectbox("Enfoque del análisis", FOCUSES, key="cfg_focus",
+                            help="Desde qué ángulo analiza el agente la conversación.")
+        st.caption(":material/auto_awesome: El tipo de reunión ajusta el rol y el enfoque; "
+                   "puedes cambiarlos.")
         st.text_input("Título", key="meet_title", placeholder="Ej. Defensa de tesis: IA en las PYMES")
         st.text_area(
             "Contexto y objetivo", key="meet_context", height=130,
@@ -760,9 +797,10 @@ def prepare_tab(engine, cfg: SessionConfig) -> list:
 # --------------------------------------------------------------------------
 # Pestaña: En vivo (fragmento que se refresca solo mientras hay actividad)
 # --------------------------------------------------------------------------
-def render_card(card: dict) -> None:
+def render_card(card: dict, spotlight: bool = False) -> None:
     icon, label, _, color = CARDS.get(card["tipo"], CARDS["idea"])
-    with st.container(border=True, key="card-%s-%s" % (card["tipo"], card["id"])):
+    prefix = "spot" if spotlight else "card"
+    with st.container(border=True, key="%s-%s-%s" % (prefix, card["tipo"], card["id"])):
         badge = " :red-badge[:material/priority_high: Atención]" \
             if card.get("prioridad") == "alta" else ""
         st.markdown(":%s-badge[:material/%s: %s]%s" % (color, icon, label, badge))
@@ -774,6 +812,75 @@ def render_card(card: dict) -> None:
         links = " ".join("[%s](%s)" % (md_escape(s["title"][:40]), s["url"])
                          for s in card.get("sources") or [])
         st.caption(meta + ((" · Fuentes: " + links) if links else ""))
+        if spotlight:
+            pinned = ss.get("pin_id") == card["id"]
+            st.button("Soltar" if pinned else "Fijar aquí", key="pin-%s" % card["id"],
+                      icon=":material/keep_off:" if pinned else ":material/keep:",
+                      on_click=toggle_pin, args=(card["id"],),
+                      help="Una tarjeta fijada se queda aquí aunque lleguen sugerencias nuevas.")
+
+
+def toggle_pin(card_id: str) -> None:
+    ss.pin_id = None if ss.get("pin_id") == card_id else card_id
+
+
+def pick_spotlight(cards: list) -> dict | None:
+    """La tarjeta más útil del último análisis (o la que fijaste)."""
+    if not cards:
+        return None
+    pinned = next((c for c in cards if c["id"] == ss.get("pin_id")), None)
+    if pinned:
+        return pinned
+    last = cards[-1].get("batch")
+    latest = [c for c in cards if c.get("batch") == last and c["tipo"] != "analisis"] \
+        or [cards[-1]]
+
+    def rank(card):
+        tipo = card["tipo"]
+        return (card.get("prioridad") != "alta",
+                SPOT_RANK.index(tipo) if tipo in SPOT_RANK else 99)
+
+    return sorted(latest, key=rank)[0]
+
+
+def toggle_feed_pause() -> None:
+    ss.feed_freeze = None if ss.get("feed_freeze") is not None else len(ss.meeting["cards"])
+
+
+def suggestions_panel(meeting: dict) -> None:
+    all_cards = meeting["cards"]
+    frozen = ss.get("feed_freeze")
+    visible = all_cards[:frozen] if frozen is not None else all_cards
+    pending = len(all_cards) - len(visible)
+    if not all_cards:
+        st.caption("Aún no hay sugerencias. Conforme avance la reunión verás aquí la más "
+                   "importante en grande y el resto ordenado por tipo.")
+        return
+
+    head, pause = st.columns([3, 1.4], vertical_alignment="center")
+    head.markdown("<div class='now'><i></i>Ahora</div>" if frozen is None else
+                  "<div class='now'>En pausa</div>", unsafe_allow_html=True)
+    pause.button("Reanudar (%d nuevas)" % pending if frozen is not None else "Pausar",
+                 icon=":material/play_arrow:" if frozen is not None else ":material/pause:",
+                 on_click=toggle_feed_pause, width="stretch", key="feed_pause",
+                 help="Congela la vista para leer con calma; las sugerencias nuevas se guardan "
+                      "y aparecen al reanudar.")
+    spot = pick_spotlight(visible)
+    if spot:
+        render_card(spot, spotlight=True)
+
+    rest = [c for c in visible if not spot or c["id"] != spot["id"]]
+    if not rest:
+        return
+    group = st.segmented_control("Anteriores", list(GROUPS), key="feed_group", default="todo",
+                                 format_func=lambda g: GROUPS[g][0], width="stretch")
+    types = GROUPS.get(group or "todo", GROUPS["todo"])[1]
+    shown = [c for c in rest if types is None or c["tipo"] in types]
+    with st.container(height=360, border=False):
+        if not shown:
+            st.caption("No hay sugerencias de este tipo todavía.")
+        for card in reversed(shown[-40:]):
+            render_card(card)
 
 
 def live_view() -> None:
@@ -782,7 +889,7 @@ def live_view() -> None:
     verbal = cfg.output != "escrito"
     process_results(verbal)
 
-    left, right = st.columns([5, 7], gap="large")
+    left, right = st.columns([4, 7], gap="large")
     with left:
         mode = st.radio(
             "Captura", ["dictado", "audio"], horizontal=True, key="cap_mode",
@@ -836,7 +943,7 @@ def live_view() -> None:
 
         total_words = word_count(meeting["transcript"])
         st.markdown("##### Transcripción  :gray[· %s palabras]" % format(total_words, ","))
-        with st.container(height=320, border=True):
+        with st.container(height=260, border=True):
             if not meeting["transcript"]:
                 st.caption("Aquí aparecerá lo que se diga en la reunión. Inicia la captura o "
                            "escribe una nota abajo.")
@@ -887,13 +994,7 @@ def live_view() -> None:
             retry = (" Reintento automático en %d s." % wait) if wait > 0 else ""
             (st.warning if error["kind"] in ("quota", "overloaded", "timeout") else st.error)(
                 error["message"] + retry, icon=":material/error:")
-        with st.container(height=560, border=False):
-            if not meeting["cards"]:
-                st.caption("Aún no hay sugerencias. Conforme avance la reunión verás aquí "
-                           "respuestas sugeridas, tareas detectadas, datos verificados, riesgos "
-                           "y preguntas clave.")
-            for card in reversed(meeting["cards"][-40:]):
-                render_card(card)
+        suggestions_panel(meeting)
 
     # Apaga el refresco automático cuando ya no hay nada en curso.
     if ss.polling != (cap["capturing"] or worker.busy):
