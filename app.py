@@ -813,11 +813,11 @@ def suggestions_panel(meeting: dict) -> None:
     categories = [{"key": t, "label": CARDS[t][1], "icon": CARDS[t][0], "color": CARDS[t][2],
                    "empty": CAROUSEL_EMPTY[t], "items": buckets[t]} for t in chosen]
     # «default» es un nombre reservado de los componentes: el tipo inicial va como start_type.
-    coverflow(categories=categories, start_type="respuesta", height=420, reset=meeting["id"],
+    coverflow(categories=categories, start_type="respuesta", height=380, reset=meeting["id"],
               key="coverflow")
     st.caption(":material/keyboard: Cambia de tipo con ← → del teclado, deslizando o con un clic "
                "en las tarjetas laterales. El número sobre cada tipo indica sugerencias nuevas. "
-               "Usa :material/fullscreen: para verlo en pantalla completa (Esc para salir).")
+               "El botón **Pantalla completa** está arriba del carrusel (Esc para salir).")
 
 
 def live_view() -> None:

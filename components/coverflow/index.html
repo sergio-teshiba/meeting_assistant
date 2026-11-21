@@ -58,14 +58,19 @@
   .sug .m { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
   .sug .m a { color: var(--primary); text-decoration: none; }
   .none { color: var(--muted); font-size: 14px; line-height: 1.5; padding: 8px 0; }
-  #controls { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 10px; }
+  #controls { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 0 0 8px; flex-wrap: wrap; }
   .nav { width: 42px; height: 42px; border-radius: 999px; border: 1px solid var(--line); background: rgba(148,163,184,.08);
          color: var(--text); display: grid; place-items: center; cursor: pointer; transition: background .2s, opacity .2s; }
   .nav:hover { background: rgba(148,163,184,.16); }
   .nav:disabled { opacity: .3; cursor: default; }
   .nav .ms { font-size: 24px; }
   #name { font-size: 13px; color: var(--muted); min-width: 150px; text-align: center; }
-  #fs { margin-left: 8px; }
+  #fs { margin-left: 6px; display: inline-flex; align-items: center; gap: 6px; height: 42px; padding: 0 16px;
+        border-radius: 999px; border: 1px solid rgba(45,212,191,.45); background: rgba(45,212,191,.12);
+        color: var(--primary); font: 600 13px var(--font); cursor: pointer; transition: background .2s; }
+  #fs:hover { background: rgba(45,212,191,.22); }
+  #fs .ms { font-size: 20px; }
+  #root.fs #controls { order: 2; margin: 12px 0 0; }
   .head .new { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 99px; background: var(--acc);
                color: #0b0f17; font-size: 11px; font-weight: 800; display: none; place-items: center; }
   .head .new.on { display: grid; }
@@ -91,13 +96,13 @@
 </head>
 <body>
 <div id="root">
-  <div id="stage" aria-roledescription="carrusel" aria-label="Sugerencias por tipo"></div>
   <div id="controls">
     <button class="nav" id="prev" type="button" aria-label="Tipo anterior"><span class="ms">chevron_left</span></button>
     <span id="name"></span>
     <button class="nav" id="next" type="button" aria-label="Tipo siguiente"><span class="ms">chevron_right</span></button>
-    <button class="nav" id="fs" type="button" aria-label="Pantalla completa" title="Pantalla completa (Esc para salir)"><span class="ms" id="fsIcon">fullscreen</span></button>
+    <button id="fs" type="button" title="Pantalla completa (Esc para salir)"><span class="ms" id="fsIcon">fullscreen</span><span id="fsText">Pantalla completa</span></button>
   </div>
+  <div id="stage" aria-roledescription="carrusel" aria-label="Sugerencias por tipo"></div>
 </div>
 <script>
 (function () {
@@ -165,13 +170,16 @@
     if (!req) { fallback(); return; }
     try {
       var p = req.call(target);
-      if (p && p.then) p.catch(fallback); else setTimeout(fallback, 400);
+      if (p && p.catch) p.catch(fallback);
+      // Hay navegadores que aceptan la petición sin entrar a pantalla completa: se verifica.
+      setTimeout(fallback, 700);
     } catch (_) { fallback(); }
   }
   function onFsChange() {
     var on = isFs();
     $("root").classList.toggle("fs", on);
     $("fsIcon").textContent = on ? "fullscreen_exit" : "fullscreen";
+    $("fsText").textContent = on ? "Salir (Esc)" : "Pantalla completa";
     $("fs").title = on ? "Salir de pantalla completa (Esc)" : "Pantalla completa (Esc para salir)";
     setTimeout(function () { layout(); fitHeight(); }, 60);
   }
