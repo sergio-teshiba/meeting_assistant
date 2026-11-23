@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sugerencias</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600..800&display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block">
 <style>
-  :root { --primary: #2dd4bf; --text: #e6e8ee; --muted: #94a3b8; --card: #131926;
+  :root { --primary: #F2B035; --text: #e8ecf4; --muted: #9aa6c0; --card: #1B2540;
           --line: rgba(148,163,184,.18); --font: Inter, "Source Sans Pro", system-ui, sans-serif; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: transparent; color: var(--text); font-family: var(--font); }
@@ -40,7 +41,7 @@
   .item.center .pill { opacity: 0; pointer-events: none; }
   .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .head .ms { font-size: 26px; color: var(--acc); }
-  .head h3 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+  .head h3 { margin: 0; font: 700 19px "Bricolage Grotesque", var(--font); letter-spacing: -.015em; }
   .head .count { margin-left: auto; font-size: 12px; color: var(--muted); }
   .list { overflow-y: auto; flex: 1; padding-right: 6px; user-select: text; }
   .list::-webkit-scrollbar { width: 6px; } .list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 9px; }
@@ -66,16 +67,16 @@
   .nav .ms { font-size: 24px; }
   #name { font-size: 13px; color: var(--muted); min-width: 150px; text-align: center; }
   #fs { margin-left: 6px; display: inline-flex; align-items: center; gap: 6px; height: 42px; padding: 0 16px;
-        border-radius: 999px; border: 1px solid rgba(45,212,191,.45); background: rgba(45,212,191,.12);
+        border-radius: 999px; border: 1px solid rgba(242,176,53,.5); background: rgba(242,176,53,.12);
         color: var(--primary); font: 600 13px var(--font); cursor: pointer; transition: background .2s; }
-  #fs:hover { background: rgba(45,212,191,.22); }
+  #fs:hover { background: rgba(242,176,53,.22); }
   #fs .ms { font-size: 20px; }
   #root.fs #controls { order: 2; margin: 12px 0 0; }
   .head .new { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 99px; background: var(--acc);
                color: #0b0f17; font-size: 11px; font-weight: 800; display: none; place-items: center; }
   .head .new.on { display: grid; }
   /* ---------- pantalla completa: las laterales también muestran su contenido ---------- */
-  #root.fs { position: fixed; inset: 0; background: #0b0f17; padding: 28px 24px 18px; display: flex; flex-direction: column; }
+  #root.fs { position: fixed; inset: 0; background: #131B2E; padding: 28px 24px 18px; display: flex; flex-direction: column; }
   #root.fs #stage { flex: 1; height: auto; perspective: 1700px; }
   #root.fs .item:not(.center) .pill { opacity: 0; pointer-events: none; }
   #root.fs .item:not(.center) .full { opacity: 1; padding: 16px 16px 10px; }
@@ -147,7 +148,7 @@
     if (on) {
       S.saved = { style: fe.getAttribute("style") || "", overflow: pd.body.style.overflow };
       fe.style.cssText += ";position:fixed !important;inset:0 !important;width:100vw !important;" +
-        "height:100vh !important;z-index:999999 !important;background:#0b0f17 !important;";
+        "height:100vh !important;z-index:999999 !important;background:#131B2E !important;";
       pd.body.style.overflow = "hidden";
       S.pseudo = true;
     } else if (S.pseudo) {
@@ -268,7 +269,7 @@
       });
     });
     $("prev").disabled = S.index <= 0; $("next").disabled = S.index >= S.keys.length - 1;
-    $("name").textContent = cat ? cat.label + " · " + (S.index + 1) + " / " + S.keys.length : "";
+    $("name").textContent = cat ? cat.label + " (" + (S.index + 1) + " de " + S.keys.length + ")" : "";
   }
   function go(i) {
     if (!S.keys.length) return;

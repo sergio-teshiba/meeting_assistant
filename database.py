@@ -26,6 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import streamlit as st
 
 PBKDF2_ITERATIONS = 600_000
+DRAFT_PREFIX = "[borrador] "        # reuniones autoguardadas que aún no tienen minuta
+SESSION_DAYS = 30
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 MIN_PASSWORD_LENGTH = 8
 _ENC_PREFIX = "enc:v1:"
@@ -191,7 +193,8 @@ class SupabaseStore:
 
     def count_meetings_since(self, username: str, since_iso: str) -> int:
         result = self.client.table("meetings").select("id", count="exact") \
-            .eq("username", username).gte("created_at", since_iso).execute()
+            .eq("username", username).gte("created_at", since_iso) \
+            .not_.like("title", DRAFT_PREFIX + "%").execute()
         return int(result.count or 0)
 
     # administración
@@ -288,7 +291,8 @@ class LocalStore:
 
     def count_meetings_since(self, username: str, since_iso: str) -> int:
         row = self._one("select count(*) as n from meetings where username = ? and "
-                        "created_at >= ?", (username, since_iso))
+                        "created_at >= ? and title not like ?",
+                        (username, since_iso, DRAFT_PREFIX + "%"))
         return int(row["n"]) if row else 0
 
     def list_users(self) -> List[Dict[str, Any]]:
@@ -377,16 +381,91 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[Dict[st
             store.update_user(row["username"], {"password_hash": hash_password(password)})
         except Exception:  # noqa: BLE001 - se reintentará en el próximo login
             pass
+    return True, _session_user(row), ""
+
+
+def _session_user(row: Dict[str, Any]) -> Dict[str, Any]:
     stored_key = row.get("api_key") or ""
     api_key = decrypt_secret(stored_key)
     if api_key and not stored_key.startswith(_ENC_PREFIX) and encryption_enabled():
         try:  # estaba en texto plano: la ciframos ahora
-            store.update_user(row["username"], {"api_key": encrypt_secret(api_key)})
+            get_store().update_user(row["username"], {"api_key": encrypt_secret(api_key)})
         except Exception:  # noqa: BLE001
             pass
     user = public_user_fields(row)
     user["api_key"] = api_key
-    return True, user, ""
+    return user
+
+
+# --------------------------------------------------------------------------
+# Sesión persistente («Mantener sesión iniciada»)
+# --------------------------------------------------------------------------
+# El navegador guarda un token firmado: correo + fecha de vencimiento + firma HMAC.
+# La firma incluye una huella del hash de la contraseña, así que cambiar la
+# contraseña invalida todas las sesiones abiertas en otros dispositivos.
+def _session_secret() -> bytes:
+    explicit = get_secret("SESSION_SECRET")
+    if explicit:
+        return explicit.encode("utf-8")
+    base = get_secret("SUPABASE_KEY") or get_secret("ENCRYPTION_KEY")
+    if base:  # se deriva de un secreto del servidor que nunca llega al navegador
+        return hashlib.sha256(b"agente-proactivo-session|" + base.encode("utf-8")).digest()
+    path = Path(get_secret("LOCAL_DB_PATH") or (Path(__file__).parent / ".local" / "x")).parent \
+        / "session_secret"
+    try:
+        if path.exists():
+            return path.read_bytes()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        value = secrets.token_bytes(32)
+        path.write_bytes(value)
+        return value
+    except OSError:
+        return hashlib.sha256(b"agente-proactivo-local").digest()
+
+
+def _b64u(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _unb64u(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _sign(payload: str, password_hash: str) -> str:
+    fingerprint = hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:16]
+    mac = hmac.new(_session_secret(), (payload + "|" + fingerprint).encode("utf-8"),
+                   hashlib.sha256).digest()
+    return _b64u(mac)
+
+
+def issue_session_token(username: str, days: int = SESSION_DAYS) -> str:
+    """Token para la cookie de sesión. Vacío si no se pudo leer el usuario."""
+    try:
+        row = get_store().get_user(normalize_email(username))
+    except Exception:  # noqa: BLE001
+        return ""
+    if not row:
+        return ""
+    expires = int(datetime.now(timezone.utc).timestamp()) + days * 86400
+    payload = _b64u(json.dumps({"u": row["username"], "e": expires}).encode("utf-8"))
+    return "v1.%s.%s" % (payload, _sign(payload, row.get("password_hash", "")))
+
+
+def user_from_session_token(token: str) -> Optional[Dict[str, Any]]:
+    """Valida el token de la cookie y devuelve el usuario, o None si no sirve."""
+    try:
+        version, payload, signature = (token or "").split(".")
+        if version != "v1":
+            return None
+        data = json.loads(_unb64u(payload))
+        if int(data["e"]) < datetime.now(timezone.utc).timestamp():
+            return None
+        row = get_store().get_user(normalize_email(data["u"]))
+    except Exception:  # noqa: BLE001 - token corrupto, vencido o base caída
+        return None
+    if not row or not hmac.compare_digest(signature, _sign(payload, row.get("password_hash", ""))):
+        return None
+    return _session_user(row)
 
 
 def save_api_key(username: str, api_key: str) -> None:

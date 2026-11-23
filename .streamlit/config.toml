@@ -1,21 +1,24 @@
 # Apariencia y servidor. (Los secretos van en .streamlit/secrets.toml, que NO se sube a git.)
+# Concepto visual: «sala de juntas de noche». Tinta azul de fondo; ámbar = atención y
+# acciones; cian = en vivo / escuchando (este último se aplica en app.py).
 [theme]
 base = "dark"
-primaryColor = "#2DD4BF"
-backgroundColor = "#0B0F17"
-secondaryBackgroundColor = "#131926"
-textColor = "#E6E8EE"
-borderColor = "#222A38"
+primaryColor = "#F2B035"
+backgroundColor = "#131B2E"
+secondaryBackgroundColor = "#1B2540"
+textColor = "#E8ECF4"
+borderColor = "#2B3757"
 showWidgetBorder = true
 showSidebarBorder = true
-baseRadius = "0.75rem"
-buttonRadius = "0.6rem"
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap, sans-serif"
-headingFontWeights = [650, 600, 600, 600, 600, 600]
+baseRadius = "0.6rem"
+buttonRadius = "0.55rem"
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Bricolage Grotesque:https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&display=swap, IBM Plex Sans, sans-serif"
+headingFontWeights = [700, 650, 650, 600, 600, 600]
 
 [theme.sidebar]
-backgroundColor = "#0F141F"
-secondaryBackgroundColor = "#161D2B"
+backgroundColor = "#101727"
+secondaryBackgroundColor = "#18213A"
 
 [client]
 toolbarMode = "minimal"

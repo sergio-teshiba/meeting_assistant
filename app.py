@@ -7,6 +7,7 @@ Flujo: Preparar (contexto y documentos) → En vivo (captura + tarjetas proactiv
 from __future__ import annotations
 
 import base64
+import html as _html
 import re
 import time
 import uuid
@@ -19,6 +20,11 @@ import streamlit.components.v1 as components
 
 import billing
 import database as db
+
+try:  # componentes shadcn/ui (requieren Python 3.10+ y Streamlit 1.60+)
+    import streamlit_shadcn_ui as shadcn
+except Exception:  # noqa: BLE001 - sin la librería se usan los elementos nativos
+    shadcn = None
 from documents import (AUDIO_TYPES, SUPPORTED_TYPES, build_doc_parts, load_document,
                        minutes_to_docx, minutes_to_markdown)
 from gemini_core import GeminiEngine, GeminiError, LiveWorker, SessionConfig, strip_markdown
@@ -33,6 +39,10 @@ live_capture = components.declare_component(
     "live_capture", path=str(BASE_DIR / "components" / "live_capture"))
 coverflow = components.declare_component(
     "coverflow", path=str(BASE_DIR / "components" / "coverflow"))
+session_cookie = components.declare_component(
+    "session_cookie", path=str(BASE_DIR / "components" / "session_cookie"))
+COOKIE_NAME = "pa_session"
+AUTOSAVE_SECONDS = 45
 
 # --------------------------------------------------------------------------
 # Catálogos
@@ -52,16 +62,16 @@ FOCUSES = ["General / Corporativo", "Técnico / Arquitectura", "Comercial / Nego
 LANGS = {"es-MX": "Español (México)", "es-ES": "Español (España)", "en-US": "English (US)",
          "pt-BR": "Português (Brasil)"}
 CARDS = {  # tipo: (icono Material, etiqueta, color de acento, color de etiqueta)
-    "resumen": ("summarize", "Resumen", "#60a5fa", "blue"),
-    "tarea": ("task_alt", "Tarea", "#fbbf24", "orange"),
-    "respuesta": ("forum", "Respuesta sugerida", "#2dd4bf", "green"),
-    "pregunta": ("help", "Pregunta", "#a78bfa", "violet"),
-    "dato": ("fact_check", "Dato", "#38bdf8", "blue"),
-    "riesgo": ("warning", "Riesgo", "#f87171", "red"),
-    "agenda": ("event_note", "Agenda", "#94a3b8", "gray"),
-    "idea": ("lightbulb", "Idea", "#4ade80", "green"),
-    "analisis": ("psychology", "Análisis completo", "#818cf8", "violet"),
-    "consulta": ("person", "Tu pregunta", "#38bdf8", "blue"),
+    "resumen": ("summarize", "Resumen", "#7FA6F7", "blue"),
+    "tarea": ("task_alt", "Tarea", "#6FCF97", "green"),
+    "respuesta": ("forum", "Respuesta sugerida", "#F2B035", "orange"),
+    "pregunta": ("help", "Pregunta", "#A78BFA", "violet"),
+    "dato": ("fact_check", "Dato", "#59C3E3", "blue"),
+    "riesgo": ("warning", "Riesgo", "#F87171", "red"),
+    "agenda": ("event_note", "Agenda", "#94A3B8", "gray"),
+    "idea": ("lightbulb", "Idea", "#E9D25F", "orange"),
+    "analisis": ("psychology", "Análisis completo", "#7FA6F7", "violet"),
+    "consulta": ("person", "Tu pregunta", "#F2B035", "orange"),
 }
 CARD_ORDER = ["respuesta", "pregunta", "dato", "riesgo", "tarea", "idea", "agenda", "resumen"]
 SOURCES = {"mic": "Mi micrófono (reunión presencial)",
@@ -136,20 +146,24 @@ hr{margin:1rem 0 !important;opacity:.6}
 [data-testid="stExpandSidebarButton"]{border-radius:999px}
 /* ---------- marca ---------- */
 .brand{display:flex;align-items:center;gap:.6rem;margin:0 0 .15rem}
-.brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
-  background:linear-gradient(135deg,#2dd4bf,#6366f1);color:#0b0f17;font-weight:800;font-size:.95rem}
-.brand-name{font-weight:700;font-size:1.05rem;letter-spacing:-.01em}
+.brand-mark{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
+  background:#F2B035;color:#131B2E;font:800 1rem "Bricolage Grotesque",sans-serif}
+.brand-name{font:700 1.12rem "Bricolage Grotesque",sans-serif;letter-spacing:-.01em}
 .brand-sub{opacity:.55;font-size:.9rem}
-.meeting-title{font-size:1.7rem;font-weight:650;letter-spacing:-.02em;margin:.6rem 0 .35rem;line-height:1.2}
+.meeting-title{font:700 2.1rem/1.1 "Bricolage Grotesque",sans-serif;letter-spacing:-.025em;
+  margin:.6rem 0 .5rem;max-width:22ch}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 1rem}
 .chip{font-size:.78rem;padding:.18rem .6rem;border-radius:999px;border:1px solid rgba(148,163,184,.22);
   color:rgba(229,231,235,.78);background:rgba(148,163,184,.06)}
+/* ---------- acentos con significado ---------- */
+[data-testid="stBaseButton-primary"],[data-testid="stBaseButton-primaryFormSubmit"]{color:#131B2E !important;
+  font-weight:600}
+[data-testid="stBaseButton-primary"] p,[data-testid="stBaseButton-primaryFormSubmit"] p{color:#131B2E !important}
 /* ---------- secciones ---------- */
-.sec{font-size:.72rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;opacity:.55;
-  margin:1.1rem 0 .4rem}
+.sec{font-size:.86rem;font-weight:600;color:rgba(232,236,244,.62);margin:1.2rem 0 .45rem}
 .step{display:flex;align-items:center;gap:.55rem;font-weight:600;font-size:1.02rem;margin:.2rem 0 .6rem}
 .step b{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:.75rem;
-  background:rgba(45,212,191,.14);color:#2dd4bf}
+  background:rgba(242,176,53,.16);color:#F2B035}
 /* ---------- pestañas ---------- */
 [data-baseweb="tab-list"]{gap:1.4rem;border-bottom:1px solid rgba(148,163,184,.14)}
 [data-baseweb="tab"]{padding-left:0 !important;padding-right:0 !important}
@@ -163,10 +177,11 @@ hr{margin:1rem 0 !important;opacity:.6}
 """ + "".join("[class*='st-key-card-%s-']{border-left-color:%s !important}" % (k, v[2])
               for k, v in CARDS.items()) + """
 /* ---------- acceso ---------- */
-.hero h1{font-size:2.6rem;line-height:1.1;margin:.6rem 0 .8rem;letter-spacing:-.03em}
+.hero h1{font:800 2.9rem/1.04 "Bricolage Grotesque",sans-serif;margin:.8rem 0 .9rem;
+  letter-spacing:-.035em;max-width:14ch}
 .hero p{font-size:1.06rem;opacity:.7;line-height:1.55}
 .feat{display:flex;gap:.75rem;align-items:flex-start;margin:.9rem 0}
-.feat .ic{font-family:"Material Symbols Rounded";font-size:1.35rem;color:#2dd4bf;line-height:1.2}
+.feat .ic{font-family:"Material Symbols Rounded";font-size:1.35rem;color:#F2B035;line-height:1.2}
 .feat b{display:block;font-weight:600}
 .feat span{opacity:.62;font-size:.93rem}
 </style>""", unsafe_allow_html=True)
@@ -181,6 +196,30 @@ _MD_SPECIAL = re.compile(r"([\\`*_\[\]#<>$~|])")
 def md_escape(text: str) -> str:
     """Texto literal (transcripción, títulos): que nada se interprete como formato."""
     return _MD_SPECIAL.sub(r"\\\1", text or "")
+
+
+def badges(items: list, key: str) -> None:
+    """Etiquetas compactas: shadcn si está disponible; si no, HTML propio."""
+    if shadcn is not None:
+        try:
+            shadcn.badges([shadcn.BadgeItem(text, "secondary" if i else "default")
+                           for i, text in enumerate(items)], key=key)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    st.markdown("<div class='chips'>%s</div>" % "".join(
+        "<span class='chip'>%s</span>" % _html.escape(t) for t in items), unsafe_allow_html=True)
+
+
+def metric(column, label: str, value, description: str = "", key: str = "") -> None:
+    if shadcn is not None:
+        try:
+            with column:
+                shadcn.metric_card(label, value, description=description or None, key=key)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    column.metric(label, value, help=description or None)
 
 
 def section(label: str) -> None:
@@ -438,6 +477,65 @@ def process_results(verbal: bool) -> None:
 # --------------------------------------------------------------------------
 # Pantalla de acceso
 # --------------------------------------------------------------------------
+def complete_login(user: dict, settings: dict, remember: bool) -> None:
+    ss.api_key = user.pop("api_key")
+    before = user["plan"]
+    user, plan_msg = billing.sync_plan(user, settings)
+    if user["plan"] != before:
+        ss.plan_msg = plan_msg   # solo se avisa si el plan cambió
+    ss.user = user
+    ss.login_fails = 0
+    ss.logged_out = False
+    ss.session_token = db.issue_session_token(user["username"]) if remember else ""
+    ss.cookie_action = "set" if remember else "clear"
+    ss.resume_offer = find_unfinished_meeting(user["username"])
+
+
+def find_unfinished_meeting(username: str) -> dict | None:
+    """Última reunión autoguardada sin minuta de las últimas 12 horas, si la hay."""
+    try:
+        rows = db.get_store().list_meetings(username, limit=5)
+    except Exception:  # noqa: BLE001
+        return None
+    limit = datetime.now(timezone.utc).timestamp() - 12 * 3600
+    for row in rows:
+        title = str(row.get("title") or "")
+        if not title.startswith(db.DRAFT_PREFIX):
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(row.get("updated_at")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if stamp.timestamp() >= limit:
+            return {"id": row["id"], "title": title[len(db.DRAFT_PREFIX):], "at": stamp.timestamp()}
+    return None
+
+
+def try_cookie_login(settings: dict) -> bool:
+    if ss.get("logged_out") or ss.get("cookie_checked"):
+        return False
+    ss.cookie_checked = True
+    try:
+        token = st.context.cookies.get(COOKIE_NAME, "")
+    except Exception:  # noqa: BLE001 - versión de Streamlit sin acceso a cookies
+        token = ""
+    user = db.user_from_session_token(token) if token else None
+    if not user:
+        return False
+    complete_login(user, settings, remember=True)
+    return True
+
+
+def render_cookie() -> None:
+    """Guarda (o borra) la cookie de sesión en el navegador."""
+    action = ss.get("cookie_action")
+    if action == "set" and ss.get("session_token"):
+        session_cookie(name=COOKIE_NAME, value=ss.session_token,
+                       max_age=db.SESSION_DAYS * 86400, key="session_cookie", default=None)
+    elif action == "clear":
+        session_cookie(name=COOKIE_NAME, value="", key="session_cookie", default=None)
+
+
 def login_screen(store, settings: dict) -> None:
     left, right = st.columns([1.15, 1], gap="large")
     with left:
@@ -466,6 +564,11 @@ def login_screen(store, settings: dict) -> None:
                 email = st.text_input("Correo electrónico", autocomplete="email")
                 password = st.text_input("Contraseña", type="password",
                                          autocomplete="current-password")
+                remember = st.checkbox("Mantener sesión iniciada en este dispositivo",
+                                       value=True,
+                                       help="No tendrás que volver a entrar al recargar la página "
+                                            "o al volver a la app (hasta %d días). Desactívalo en "
+                                            "computadoras compartidas." % db.SESSION_DAYS)
                 submitted = st.form_submit_button("Entrar", type="primary", width="stretch")
             if submitted:
                 locked = ss.login_locked_until - time.time()
@@ -476,13 +579,7 @@ def login_screen(store, settings: dict) -> None:
                 else:
                     ok, user, message = db.authenticate_user(email, password)
                     if ok:
-                        ss.api_key = user.pop("api_key")
-                        before = user["plan"]
-                        user, plan_msg = billing.sync_plan(user, settings)
-                        if user["plan"] != before:
-                            ss.plan_msg = plan_msg   # solo se avisa si el plan cambió
-                        ss.user = user
-                        ss.login_fails = 0
+                        complete_login(user, settings, remember)
                         st.rerun()
                     ss.login_fails += 1
                     if ss.login_fails >= 5:
@@ -512,9 +609,12 @@ def login_screen(store, settings: dict) -> None:
 # Barra lateral
 # --------------------------------------------------------------------------
 def logout() -> None:
+    autosave_meeting(force=True)
     for key in ("user", "api_key", "meeting", "worker", "cap", "speak", "history", "last_error",
-                "plan_msg", "gen_key"):
+                "plan_msg", "gen_key", "session_token", "resume_offer"):
         ss.pop(key, None)
+    ss.logged_out = True          # no volver a entrar solo con la cookie
+    ss.cookie_action = "clear"
 
 
 def api_key_panel(user: dict, engine) -> None:
@@ -603,6 +703,8 @@ def password_panel(user: dict) -> None:
                 else:
                     ok, message = db.change_password(user["username"], current, new1)
                     (st.success if ok else st.error)(message)
+                    if ok and ss.get("cookie_action") == "set":
+                        ss.session_token = db.issue_session_token(user["username"])
 
 
 def sidebar(user: dict, store, engine, settings: dict) -> None:
@@ -933,6 +1035,8 @@ def live_view() -> None:
                 error["message"] + retry, icon=":material/error:")
         suggestions_panel(meeting)
 
+    autosave_meeting()
+
     # Apaga el refresco automático cuando ya no hay nada en curso.
     if ss.polling != (cap["capturing"] or worker.busy):
         st.rerun()
@@ -946,15 +1050,85 @@ def month_start_iso() -> str:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
+def meeting_payload(cfg: SessionConfig, minutes: dict | None) -> dict:
+    meeting = ss.meeting
+    return {"started_at": meeting["started_at"], "transcript": meeting["transcript"],
+            "cards": meeting["cards"], "minutes": minutes,
+            "config": {"title": cfg.title, "mode": cfg.mode, "focus": cfg.focus,
+                       "context": cfg.context, "custom": cfg.custom, "agenda": cfg.agenda}}
+
+
+def autosave_meeting(force: bool = False) -> None:
+    """Guarda un borrador de la reunión en curso cada pocos segundos (si cambió)."""
+    meeting, user, rt = ss.get("meeting"), ss.get("user"), ss.get("rt")
+    if not meeting or not user or not rt or meeting.get("minutes"):
+        return
+    if not (meeting["transcript"] or meeting["cards"]):
+        return
+    signature = (len(meeting["transcript"]), len(meeting["cards"]))
+    if signature == meeting.get("draft_sig"):
+        return
+    if not force and time.time() - meeting.get("draft_at", 0) < AUTOSAVE_SECONDS:
+        return
+    cfg = rt["cfg"]
+    title = db.DRAFT_PREFIX + (cfg.title or "Reunión del %s" % fmt_time(
+        meeting["started_at"], "%d/%m/%Y %H:%M"))
+    try:
+        db.get_store().save_meeting(user["username"], meeting["id"], title,
+                                    meeting_payload(cfg, None))
+    except Exception:  # noqa: BLE001 - se reintentará en el siguiente ciclo
+        return
+    meeting["draft_sig"], meeting["draft_at"] = signature, time.time()
+    ss.history = None
+
+
+def resume_meeting(meeting_id: str) -> None:
+    record = db.get_store().get_meeting(ss.user["username"], meeting_id)
+    ss.resume_offer = None
+    if not record:
+        return
+    data = record.get("data") or {}
+    meeting = new_meeting()
+    meeting.update(id=record["id"], started_at=data.get("started_at") or meeting["started_at"],
+                   transcript=data.get("transcript") or [], cards=data.get("cards") or [])
+    meeting["analyzed"] = len(meeting["transcript"])
+    meeting["draft_sig"] = (len(meeting["transcript"]), len(meeting["cards"]))
+    meeting["draft_at"] = time.time()
+    ss.meeting = meeting
+    config = data.get("config") or {}
+    for key, field in (("meet_title", "title"), ("meet_context", "context"),
+                       ("meet_agenda", "agenda"), ("meet_custom", "custom")):
+        if config.get(field):
+            ss[key] = config[field]
+    if config.get("mode") in MODES:
+        ss.cfg_mode = config["mode"]
+    if config.get("focus") in FOCUSES:
+        ss.cfg_focus = config["focus"]
+
+
+def dismiss_resume() -> None:
+    ss.resume_offer = None
+
+
+def resume_banner() -> None:
+    offer = ss.get("resume_offer")
+    if not offer or ss.meeting["transcript"] or ss.meeting["cards"]:
+        return
+    with st.container(border=True):
+        text, go_col, no_col = st.columns([5, 1.6, 1.2], vertical_alignment="center")
+        text.markdown(":material/history: Tienes una reunión sin terminar: **%s** "
+                      "(guardada a las %s). ¿Quieres continuarla?"
+                      % (md_escape(offer["title"]), fmt_time(offer["at"])))
+        go_col.button("Continuar", type="primary", icon=":material/play_arrow:", width="stretch",
+                      on_click=resume_meeting, args=(offer["id"],), key="resume_go")
+        no_col.button("Ahora no", width="stretch", on_click=dismiss_resume, key="resume_no")
+
+
 def save_meeting(user: dict, store, cfg: SessionConfig, minutes: dict | None) -> bool:
     meeting = ss.meeting
     title = (minutes or {}).get("titulo") or cfg.title or "Reunión del %s" % fmt_time(
         meeting["started_at"], "%d/%m/%Y %H:%M")
-    data = {"started_at": meeting["started_at"], "transcript": meeting["transcript"],
-            "cards": meeting["cards"], "minutes": minutes,
-            "config": {"mode": cfg.mode, "focus": cfg.focus, "context": cfg.context,
-                       "custom": cfg.custom,
-                       "agenda": cfg.agenda}}
+    data = meeting_payload(cfg, minutes)
     try:
         store.save_meeting(user["username"], meeting["id"], title, data)
     except Exception as exc:  # noqa: BLE001
@@ -1013,6 +1187,11 @@ def minutes_tab(user: dict, store, engine, cfg: SessionConfig, doc_parts: list,
 
     rev = meeting["minutes_rev"]
     st.divider()
+    k1, k2, k3, k4 = st.columns(4)
+    metric(k1, "Acuerdos", len(base.get("acuerdos") or []), key="mk_acuerdos")
+    metric(k2, "Compromisos", len(base.get("compromisos") or []), key="mk_compromisos")
+    metric(k3, "Riesgos", len(base.get("riesgos") or []), key="mk_riesgos")
+    metric(k4, "Preguntas abiertas", len(base.get("preguntas_abiertas") or []), key="mk_preguntas")
     title = st.text_input("Título", value=base["titulo"], key="min_title_%d" % rev)
     summary = st.text_area("Resumen ejecutivo", value=base["resumen_ejecutivo"], height=140,
                            key="min_summary_%d" % rev)
@@ -1160,9 +1339,11 @@ def admin_tab(store, settings: dict) -> None:
         users = []
     if users:
         m1, m2, m3 = st.columns(3)
-        m1.metric("Usuarios", len(users))
-        m2.metric("Plan Pro", sum(1 for u in users if u["plan"] == "pro"))
-        m3.metric("Con API key propia", sum(1 for u in users if u["has_api_key"]))
+        metric(m1, "Usuarios", len(users), "Cuentas registradas", key="m_users")
+        metric(m2, "Plan Pro", sum(1 for u in users if u["plan"] == "pro"), "Clientes que pagan",
+               key="m_pro")
+        metric(m3, "Con API key propia", sum(1 for u in users if u["has_api_key"]),
+               "Usan su propia cuota de Gemini", key="m_keys")
         frame = pd.DataFrame(users)[["username", "plan", "plan_source", "is_admin",
                                      "has_api_key", "created_at"]]
         edited = st.data_editor(
@@ -1226,6 +1407,9 @@ init_state()
 store = db.get_store()
 settings = db.get_settings()
 
+if not ss.user and try_cookie_login(settings):
+    st.rerun()
+render_cookie()
 if not ss.user:
     login_screen(store, settings)
     st.stop()
@@ -1241,19 +1425,17 @@ if engine:
         engine = None   # la llave guardada ya no sirve: se pide una nueva en el panel
 cfg = current_config(user)
 
-import html as _html
 sources_on = [name for name, on in (("Documentos", cfg.use_docs), ("Conocimiento IA", cfg.use_knowledge),
                                     ("Web", cfg.use_web)) if on]
 chips = [MODES[cfg.mode], OUTPUTS[cfg.output], cfg.focus,
          "Fuentes: " + (", ".join(sources_on) or "ninguna")]
-st.markdown(
-    "<div class='meeting-title'>%s</div><div class='chips'>%s</div>"
-    % (_html.escape(cfg.title or "Nueva reunión"),
-       "".join("<span class='chip'>%s</span>" % _html.escape(c) for c in chips)),
-    unsafe_allow_html=True)
+st.markdown("<div class='meeting-title'>%s</div>" % _html.escape(cfg.title or "Nueva reunión"),
+            unsafe_allow_html=True)
+badges(chips, key="header_badges")
 if not sources_on:
     st.warning("Activa al menos una fuente de información en el panel izquierdo.")
 
+resume_banner()
 tab_names = [":material/tune: Preparar", ":material/graphic_eq: En vivo",
              ":material/description: Minuta", ":material/history: Historial"]
 if user["is_admin"]:
@@ -1281,3 +1463,4 @@ with tab_history:
 if user["is_admin"]:
     with tabs[4]:
         admin_tab(store, settings)
+autosave_meeting()

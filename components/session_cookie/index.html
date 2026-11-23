@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Sesión</title></head>
+<body style="margin:0">
+<script>
+(function () {
+  "use strict";
+  // Guarda o borra la cookie de sesión del dominio de la app. No muestra nada.
+  function post(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*"); }
+  var last = null;
+  window.addEventListener("message", function (event) {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    var a = event.data.args || {}, sig = JSON.stringify(a);
+    if (sig === last) return;
+    last = sig;
+    var name = a.name || "pa_session";
+    var secure = location.protocol === "https:" ? "; Secure" : "";
+    var value = a.value ? encodeURIComponent(a.value) : "";
+    var age = a.value ? (a.max_age || 2592000) : 0;
+    document.cookie = name + "=" + value + "; Max-Age=" + age + "; Path=/; SameSite=Lax" + secure;
+    post("streamlit:setComponentValue", { value: !!a.value, dataType: "json" });
+  });
+  post("streamlit:componentReady", { apiVersion: 1 });
+  post("streamlit:setFrameHeight", { height: 0 });
+})();
+</script>
+</body>
+</html>
