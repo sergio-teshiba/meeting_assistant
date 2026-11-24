@@ -261,8 +261,8 @@ def classify_error(exc: BaseException) -> GeminiError:
                            "API key.", "not_found", detail)
     if code in (500, 502, 503, 504) or "unavailable" in low or "overloaded" in low \
             or "deadline" in low:
-        return GeminiError("El servicio de Gemini está saturado en este momento.",
-                           "overloaded", detail, retry_in=20)
+        return GeminiError("Gemini está saturado en este momento.",
+                           "overloaded", detail, retry_in=6)
     if code == 400 or "invalid_argument" in low:
         return GeminiError("Gemini rechazó la solicitud (parámetros o archivo no admitidos).",
                            "bad_request", detail)
@@ -369,18 +369,21 @@ def live_system_prompt(cfg: SessionConfig, with_audio: bool) -> str:
     )
     return (
         "Eres el copiloto de reuniones en tiempo real de %s. Trabajas en segundo plano mientras "
-        "ocurre la reunión e intervienes solo cuando aportas valor inmediato.\n\n"
+        "ocurre la reunión y en cada turno aportas al menos una ayuda concreta si hay contenido "
+        "nuevo.\n\n"
         "ROL DEL USUARIO → %s\n"
         "ENFOQUE DEL ANÁLISIS → %s\n"
         "MODALIDAD → %s\n\n"
         "FUENTES PERMITIDAS:\n%s\n\n"
         "TIPOS DE TARJETA PERMITIDOS (usa SOLO estos):\n%s\n\n"
         "%s"
-        "- Máximo 2 tarjetas por turno, la más útil primero; cada una legible en 5 segundos "
-        "(máximo 45 palabras en \"contenido\"). Menos es más: el usuario está en plena "
-        "reunión.\n"
-        "- No repitas lo que ya dicen las tarjetas emitidas. Si no hay nada nuevo que valga la "
-        "pena, devuelve \"tarjetas\": [].\n"
+        "- Entre 1 y 2 tarjetas por turno, la más útil primero; cada una legible en 5 segundos "
+        "(máximo 45 palabras en \"contenido\").\n"
+        "- Si el texto nuevo trae cualquier idea, pregunta, cifra, argumento o tema, emite AL "
+        "MENOS 1 tarjeta útil sobre eso (qué responder, qué reforzar, qué dato citar, qué "
+        "preguntar o qué riesgo cuidar). Devuelve \"tarjetas\": [] solo si el texto nuevo es "
+        "trivial (saludos, muletillas, silencio o ruido).\n"
+        "- No repitas lo que ya dicen las tarjetas emitidas: aporta un ángulo nuevo.\n"
         "- \"prioridad\": alta solo si requiere acción o atención inmediata.\n"
         "%s\n"
         "Devuelve ÚNICAMENTE JSON válido con esta forma:\n"
@@ -448,6 +451,7 @@ class GeminiEngine:
         self.available: List[str] = []       # modelos reales de la API key (si se pudo listar)
         self._discovered = False
         self._cooldown: Dict[str, float] = {}
+        self._why: Dict[str, str] = {}       # motivo del último enfriamiento de cada modelo
         self._lock = threading.Lock()
         self.stats = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "errors": 0}
         self.last_model = ""
@@ -547,6 +551,9 @@ class GeminiEngine:
         ready = [m for m in models if self._cooldown.get(m, 0) <= now]
         if not ready:
             wait = int(min(self._cooldown.get(m, 0) for m in models) - now) + 1
+            if all(self._why.get(m) == "overloaded" for m in models):
+                raise GeminiError("Gemini está saturado en este momento.", "overloaded",
+                                  retry_in=wait)
             raise GeminiError("Se alcanzó el límite gratuito en todos los modelos. "
                               "Reintento en ~%d s." % wait, "quota", retry_in=wait)
         last: Optional[GeminiError] = None
@@ -567,7 +574,13 @@ class GeminiEngine:
                                         max_tokens, attempt_timeout, level)
                 except Exception as exc:  # noqa: BLE001
                     first = classify_error(exc)
-                    if not (level and first.kind == "bad_request"):
+                    if first.kind == "overloaded" and deadline - time.time() > 10:
+                        # Saturación momentánea (503): un reintento rápido suele funcionar.
+                        time.sleep(1.5)
+                        result = self._call(model, parts, system, schema, want_json, web,
+                                            max_tokens, min(timeout, deadline - time.time()),
+                                            level)
+                    elif not (level and first.kind == "bad_request"):
                         raise
                     # El modelo no aceptó el nivel de razonamiento: mismo modelo, sin él.
                     result = self._call(model, parts, system, schema, want_json, web,
@@ -585,7 +598,8 @@ class GeminiEngine:
                 elif err.kind == "not_found":
                     self._cooldown[model] = time.time() + 6 * 3600
                 elif err.kind == "overloaded":
-                    self._cooldown[model] = time.time() + 20
+                    self._cooldown[model] = time.time() + 8
+                self._why[model] = err.kind
                 last = err
                 continue
             result.seconds = time.time() - started

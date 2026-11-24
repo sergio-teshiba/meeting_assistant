@@ -440,9 +440,19 @@ def submit_audio_chunk(rt: dict, chunk: dict) -> None:
     mime, seconds = chunk.get("mime") or "audio/webm", int(chunk.get("dur") or 0)
 
     def job() -> dict:
-        out = engine.analyze_live(cfg, doc_parts=docs, previous_text=previous, audio=audio,
-                                  audio_mime=mime, audio_seconds=seconds, screenshot=shot,
-                                  **context)
+        # El audio no se puede volver a capturar: si Gemini falla por saturación o lentitud,
+        # se reintenta el mismo fragmento en lugar de perder lo que se dijo.
+        for attempt, pause in enumerate((3, 8, 0)):
+            try:
+                out = engine.analyze_live(cfg, doc_parts=docs, previous_text=previous,
+                                          audio=audio, audio_mime=mime, audio_seconds=seconds,
+                                          screenshot=shot, **context)
+                break
+            except GeminiError as err:
+                if err.kind not in ("overloaded", "timeout", "quota") or not pause \
+                        or (err.retry_in or 0) > 30:
+                    raise
+                time.sleep(max(pause, min(err.retry_in or 0, 30)))
         out.update(kind="live", from_audio=True, meeting_id=meeting_id, keep_cards=keep_cards,
                    audio=audio if mime == "audio/wav" else b"")
         return out
@@ -490,6 +500,8 @@ def process_results(verbal: bool) -> None:
             wait = int(result.get("retry_in") or 0)
             ss.last_error = {"message": result["message"], "kind": result.get("error_kind"),
                              "detail": result.get("detail", ""), "t": time.time()}
+            if result.get("error_kind") == "overloaded":
+                wait = min(wait or 5, 8)      # saturación momentánea: reintento casi inmediato
             ss.next_auto_at = time.time() + (min(wait, 180) if wait else 20)
             continue
         if result.get("meeting_id") != meeting["id"]:
@@ -1266,8 +1278,13 @@ def live_view() -> None:
         if error:
             wait = int(ss.next_auto_at - time.time())
             retry = (" Reintento automático en %d s." % wait) if wait > 0 else ""
-            (st.warning if error["kind"] in ("quota", "overloaded", "timeout") else st.error)(
-                error["message"] + retry, icon=":material/error:")
+            if error["kind"] in ("overloaded", "timeout"):
+                # Fallo pasajero: se reintenta solo y no se pierde nada de lo dicho.
+                st.caption(":material/sync: Gemini respondió lento; reintentando con lo que se "
+                           "dijo, sin perder nada.%s" % retry)
+            else:
+                (st.warning if error["kind"] == "quota" else st.error)(
+                    error["message"] + retry, icon=":material/error:")
         suggestions_panel(meeting)
 
     autosave_meeting()
