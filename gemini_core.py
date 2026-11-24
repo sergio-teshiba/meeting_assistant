@@ -42,6 +42,8 @@ _EXCLUDED = ("tts", "image", "live", "embedding", "transcribe", "translate", "ro
              "computer-use", "banana", "omni", "decision", "native-audio", "research")
 
 _MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash)(-preview)?$")
+# Último recurso cuando todos los «flash» agotaron su cuota (más lentos, cuota aparte).
+_PRO_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-pro(-preview)?$")
 
 CARD_TYPES = ("resumen", "tarea", "respuesta", "pregunta", "dato", "riesgo", "agenda", "idea")
 
@@ -537,6 +539,9 @@ class GeminiEngine:
                      and (_MODEL_RE.match(n).group(2) == "flash-lite") == prefer_lite]
             rest = [n for n in unknown if n not in newer]
             ordered = sorted(newer, key=rank) + ordered + sorted(rest, key=rank)
+            pros = [n for n in self.available if _PRO_RE.match(n)]
+            ordered += sorted(pros, key=lambda n: (bool(_PRO_RE.match(n).group(2)),
+                                                    -float(_PRO_RE.match(n).group(1))))
         if self.preferred_model:
             ordered = [self.preferred_model] + [m for m in ordered if m != self.preferred_model]
         return ordered
@@ -613,6 +618,13 @@ class GeminiEngine:
                                    "respuesta vacía).", "blocked")
                 continue
             return result
+        if last is not None and last.kind == "quota" and len(ready) > 1 and all(
+                self._why.get(m) == "quota" for m in ready):
+            waits = [self._cooldown.get(m, 0) - time.time() for m in models]
+            wait = max(5, int(min(waits)) + 1) if waits else last.retry_in
+            raise GeminiError("Se agotó la cuota gratuita en todos los modelos de Gemini de tu "
+                              "API key (%d probados)." % len(ready), "quota", last.detail,
+                              retry_in=wait)
         raise last or GeminiError("No fue posible obtener respuesta de Gemini.")
 
     def _call(self, model, parts, system, schema, want_json, web, max_tokens, timeout,
