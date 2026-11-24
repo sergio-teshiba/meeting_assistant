@@ -1,46 +1,99 @@
 """
-tts.py — Voz natural y gratuita con Piper (https://github.com/OHF-Voice/piper1-gpl).
+tts.py — Voz natural y gratuita para el asistente.
 
-  * Voces mexicanas de rhasspy/piper-voices (Hugging Face):
+  1) Principal: voces neuronales de Microsoft (Dalia y Jorge, México) con la librería
+     edge-tts (https://github.com/rany2/edge-tts, LGPL-3.0). Muy naturales y rápidas.
+     No es un servicio oficial: si Microsoft lo bloquea o falla, se pasa solo a Piper.
+  2) Respaldo: Piper (https://github.com/OHF-Voice/piper1-gpl), corre en el servidor.
+     Voces mexicanas de rhasspy/piper-voices (Hugging Face):
       - mujer:  es_MX-claude-high  (dataset Apache-2.0)
       - hombre: es_MX-ald-medium   (dataset Unlicense)
   * Corre en el servidor, en CPU, ~10 veces más rápido que el tiempo real.
   * Los modelos (~60 MB cada uno) se descargan la primera vez y quedan en caché.
-  * Si Piper no está instalado o falla, la app usa la voz del navegador.
+  * Solo si ambas fallan, la app usa la voz del navegador.
 
 Licencia: la librería piper-tts es GPL-3.0. Usarla en un servicio web (SaaS) no obliga
 a publicar tu código; distribuir la app como programa instalable sí lo haría.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import threading
+import time
 import urllib.request
 import wave
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 VOICES: Dict[str, Dict[str, str]] = {
-    "mujer": {"label": "Mujer (México)", "model": "es_MX-claude-high",
-              "path": "es/es_MX/claude/high/es_MX-claude-high"},
-    "hombre": {"label": "Hombre (México)", "model": "es_MX-ald-medium",
-               "path": "es/es_MX/ald/medium/es_MX-ald-medium"},
+    "mujer": {"label": "Mujer · Dalia (México)", "neural": "es-MX-DaliaNeural",
+              "model": "es_MX-claude-high", "path": "es/es_MX/claude/high/es_MX-claude-high"},
+    "hombre": {"label": "Hombre · Jorge (México)", "neural": "es-MX-JorgeNeural",
+               "model": "es_MX-ald-medium", "path": "es/es_MX/ald/medium/es_MX-ald-medium"},
 }
+NEURAL_TIMEOUT = 8          # segundos máximos esperando a Microsoft
+NEURAL_COOLDOWN = 600       # si falla, se usa Piper durante 10 min antes de reintentar
 BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 CACHE_DIR = Path(os.environ.get("TTS_CACHE_DIR") or (Path.home() / ".cache" / "agente-proactivo"))
 
 _lock = threading.Lock()
 _voices: Dict[str, object] = {}
 _errors: Dict[str, str] = {}
+_neural_down_until = 0.0
 
 
-def available() -> bool:
+def piper_available() -> bool:
     try:
         import piper  # noqa: F401
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def neural_available() -> bool:
+    try:
+        import edge_tts  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def available() -> bool:
+    return neural_available() or piper_available()
+
+
+def _neural(text: str, voice: str, speed: float) -> bytes:
+    """Voz neuronal de Microsoft (MP3). Lanza excepción si falla o tarda demasiado."""
+    import edge_tts
+
+    rate = "%+d%%" % round((speed - 1.0) * 100)
+    result: Dict[str, object] = {}
+
+    async def run() -> bytes:
+        audio = bytearray()
+        stream = edge_tts.Communicate(text, voice, rate=rate).stream()
+        async for chunk in stream:
+            if chunk.get("type") == "audio":
+                audio.extend(chunk["data"])
+        return bytes(audio)
+
+    def worker() -> None:   # hilo propio: no choca con otro bucle asyncio de Streamlit
+        try:
+            result["audio"] = asyncio.run(asyncio.wait_for(run(), NEURAL_TIMEOUT))
+        except BaseException as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True, name="tts-neural")
+    thread.start()
+    thread.join(NEURAL_TIMEOUT + 2)
+    if "error" in result:
+        raise RuntimeError(str(result["error"]) or type(result["error"]).__name__)
+    audio = result.get("audio")
+    if not audio or len(audio) < 1000:   # type: ignore[arg-type]
+        raise RuntimeError("Microsoft no devolvió audio.")
+    return audio  # type: ignore[return-value]
 
 
 def _download(url: str, dest: Path) -> None:
@@ -100,7 +153,7 @@ def load_voice(key: str):
 
 def preload(key: str) -> None:
     """Carga la voz en segundo plano para que la primera frase no tarde."""
-    if key not in VOICES or key in _voices or not available():
+    if key not in VOICES or key in _voices or not piper_available():
         return
 
     def run() -> None:
@@ -116,10 +169,31 @@ def last_error(key: str) -> str:
     return _errors.get(key, "")
 
 
+def engine_in_use() -> str:
+    """«neural» mientras Microsoft responde; «piper» si está en respaldo."""
+    return "piper" if time.time() < _neural_down_until or not neural_available() else "neural"
+
+
 def synthesize(text: str, key: str, speed: float = 1.0) -> Optional[Tuple[bytes, str]]:
-    """Devuelve (audio WAV, mime) o None si no hay voz natural disponible."""
+    """
+    Devuelve (audio, mime) o None si no hay voz natural disponible.
+    Intenta la voz de Microsoft; si falla, usa Piper con la misma voz (mujer/hombre).
+    """
+    global _neural_down_until
     text = (text or "").strip()
-    if not text or key not in VOICES or not available():
+    if not text or key not in VOICES:
+        return None
+    speed = max(0.5, min(2.0, speed))
+    if neural_available() and time.time() >= _neural_down_until:
+        try:
+            audio = _neural(text, VOICES[key]["neural"], speed)
+            _errors.pop(key, None)
+            return audio, "audio/mpeg"
+        except Exception as exc:  # noqa: BLE001
+            _neural_down_until = time.time() + NEURAL_COOLDOWN
+            _errors[key] = "Microsoft: %s" % str(exc)[:160]
+            preload(key)
+    if not piper_available():
         return None
     try:
         from piper import SynthesisConfig
@@ -127,9 +201,7 @@ def synthesize(text: str, key: str, speed: float = 1.0) -> Optional[Tuple[bytes,
         voice = load_voice(key)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav:
-            voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(
-                length_scale=1.0 / max(0.5, min(2.0, speed))))
-        _errors.pop(key, None)
+            voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(length_scale=1.0 / speed))
         return buffer.getvalue(), "audio/wav"
     except Exception as exc:  # noqa: BLE001
         _errors[key] = str(exc)[:200]

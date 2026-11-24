@@ -345,7 +345,7 @@ def add_card(card: dict, model: str = "", sources: list | None = None, batch: st
     return card
 
 
-VOICE_CHOICES = {"mujer": "Mujer (México)", "hombre": "Hombre (México)",
+VOICE_CHOICES = {"mujer": "Mujer · Dalia (México)", "hombre": "Hombre · Jorge (México)",
                  "navegador": "Voz del navegador (básica)"}
 
 
@@ -818,8 +818,9 @@ def voice_panel() -> None:
     if ss.get("cfg_voice") not in options:
         ss.cfg_voice = options[0]
     st.selectbox("Voz", options, format_func=VOICE_CHOICES.get, key="cfg_voice",
-                         help="Voces naturales gratuitas (Piper, código abierto). La primera vez "
-                              "tardan unos segundos en descargarse.")
+                         help="Voces neuronales de Microsoft, muy naturales y gratuitas. Si "
+                              "dejan de estar disponibles, se usa automáticamente una voz de "
+                              "respaldo (Piper) del mismo tipo: mujer u hombre.")
     voice = ss.cfg_voice
     if voice in tts.VOICES:
         tts.preload(voice)
@@ -830,6 +831,9 @@ def voice_panel() -> None:
             if voice in tts.VOICES else None
         if result:
             st.audio(result[0], format=result[1], autoplay=True)
+            if result[1] == "audio/wav":
+                st.caption(":material/swap_horiz: La voz de Microsoft no respondió; estás "
+                           "escuchando la voz de respaldo.")
         elif voice in tts.VOICES:
             st.caption(":material/error: No se pudo generar la voz natural (%s); se usará la del "
                        "navegador." % (tts.last_error(voice) or "sin detalle"))
@@ -1154,10 +1158,20 @@ def live_view() -> None:
             "Captura", ["dictado", "audio"], horizontal=True, key="cap_mode",
             format_func={"dictado": ":material/mic: Dictado del navegador",
                          "audio": ":material/graphic_eq: Audio con Gemini"}.get,
-            help="**Dictado:** instantáneo y sin gastar cuota; solo escucha tu micrófono "
-                 "(Chrome, Edge o Safari).\n\n**Audio con Gemini:** envía fragmentos de audio al "
-                 "modelo, que transcribe distinguiendo hablantes; puede escuchar la pestaña de "
-                 "tu videollamada aunque uses audífonos.")
+            help="**Dictado del navegador:** ideal cuando habla una sola persona (presentador, "
+                 "oyente o notas dictadas). Instantáneo y sin gastar cuota; solo escucha tu "
+                 "micrófono (Chrome, Edge o Safari) y no distingue quién habla.\n\n"
+                 "**Audio con Gemini:** elígelo cuando hay varios participantes y quieres que "
+                 "se reconozcan sus voces (tú, «Persona 1», nombres guardados). Así el agente "
+                 "sabe quién dijo qué y te sugiere qué responder. Puede escuchar la pestaña de "
+                 "tu videollamada aunque uses audífonos; gasta cuota de Gemini.")
+        if mode == "audio":
+            st.caption(":material/groups: **Varios participantes:** reconoce quién habla "
+                       "(tú, «Persona 1», nombres guardados) para sugerirte qué responder.")
+        else:
+            st.caption(":material/person: **Una sola persona habla** (presentador u oyente): "
+                       "rápido y sin gastar cuota. Si quieres que se reconozcan las voces de "
+                       "los participantes, elige **Audio con Gemini**.")
         source, snapshot = "mic", False
         if mode == "audio":
             source = st.selectbox("¿Qué debe escuchar?", list(SOURCES), format_func=SOURCES.get,
