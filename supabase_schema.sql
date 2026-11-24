@@ -35,6 +35,18 @@ create table if not exists public.meetings (
 create index if not exists meetings_username_created_idx
   on public.meetings (username, created_at desc);
 
+-- Voces guardadas («huellas de voz» para reconocer quién habla). Dato biométrico:
+-- solo se guarda con el consentimiento del usuario y se puede borrar desde la app.
+create table if not exists public.voices (
+  id         text primary key,
+  username   text not null references public.users(username) on delete cascade,
+  name       text not null,
+  embedding  jsonb not null,
+  is_owner   boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+create index if not exists voices_username_idx on public.voices (username);
+
 -- 3) SEGURIDAD (crítico)
 -- La versión anterior desactivaba RLS y usaba la llave *publishable*, que es
 -- pública por diseño: con ella cualquiera podía leer todos los hashes de
@@ -45,9 +57,11 @@ create index if not exists meetings_username_created_idx
 alter table public.users        enable row level security;
 alter table public.meetings     enable row level security;
 alter table public.app_settings enable row level security;
+alter table public.voices       enable row level security;
 revoke all on public.users        from anon, authenticated;
 revoke all on public.meetings     from anon, authenticated;
 revoke all on public.app_settings from anon, authenticated;
+revoke all on public.voices       from anon, authenticated;
 
 -- 4) Planes: ya no hace falta SQL. Cámbialos en la app → pestaña «Administración».
 

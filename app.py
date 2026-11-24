@@ -20,6 +20,9 @@ import streamlit.components.v1 as components
 
 import billing
 import database as db
+import tts
+import voices
+from gemini_core import USER_TAG
 
 try:  # componentes shadcn/ui (requieren Python 3.10+ y Streamlit 1.60+)
     import streamlit_shadcn_ui as shadcn
@@ -77,7 +80,8 @@ CARD_ORDER = ["respuesta", "pregunta", "dato", "riesgo", "tarea", "idea", "agend
 SOURCES = {"mic": "Mi micrófono (reunión presencial)",
            "tab": "Pestaña de la videollamada (Meet, Zoom o Teams web)",
            "both": "Micrófono y pestaña"}
-SRC_LABEL = {"dictado": "Tú", "manual": "Nota", "audio": "Reunión", "archivo": "Grabación"}
+# Sin identificación de voz no se sabe quién habla: nunca se asume que es el usuario.
+SRC_LABEL = {"dictado": "Micrófono", "manual": "Nota", "audio": "Reunión", "archivo": "Grabación"}
 JOB_TEXT = "Analizando la conversación"
 JOB_AUDIO = "Escuchando el fragmento"
 
@@ -261,7 +265,7 @@ def new_meeting() -> dict:
     now = time.time()
     return {"id": str(uuid.uuid4()), "started_at": now, "transcript": [], "cards": [],
             "minutes": None, "minutes_rev": 0, "analyzed": 0, "last_analysis": 0.0,
-            "last_summary": now, "saved": False}
+            "last_summary": now, "saved": False, "speakers": {}}
 
 
 def init_state() -> None:
@@ -280,9 +284,38 @@ def init_state() -> None:
     ss.setdefault("polling", False)
 
 
+def speaker_label(seg: dict, for_model: bool = False) -> str:
+    """Nombre a mostrar de quien dijo un segmento (resuelve los nombres editados)."""
+    speakers = (ss.get("meeting") or {}).get("speakers") or {}
+    speaker = speakers.get(seg.get("speaker_id") or "")
+    if speaker:
+        name = speaker["name"]
+        if speaker.get("kind") == "tú":
+            return "%s %s" % (name, USER_TAG) if for_model else "%s (tú)" % name
+        return name
+    return seg.get("speaker") or SRC_LABEL.get(seg.get("src"), "")
+
+
 def segments_text(segments: list) -> str:
-    return "\n".join(("%s: %s" % (s["speaker"], s["text"])) if s.get("speaker") else s["text"]
-                     for s in segments)
+    return "\n".join(("%s: %s" % (speaker_label(s, True), s["text"])) if speaker_label(s, True)
+                     else s["text"] for s in segments)
+
+
+def owner_display_name(user: dict) -> str:
+    local = user["username"].split("@")[0]
+    return local.replace("_", ".").split(".")[0].capitalize() or "Yo"
+
+
+def known_voices() -> list:
+    """Voces guardadas del usuario (se leen una vez por sesión)."""
+    if ss.get("known_voices") is None:
+        try:
+            ss.known_voices = db.get_store().list_voices(ss.user["username"])
+            ss.voices_error = ""
+        except Exception as exc:  # noqa: BLE001 - p. ej. falta la tabla en Supabase
+            ss.known_voices = []
+            ss.voices_error = str(exc)[:160]
+    return ss.known_voices
 
 
 def tail_words(text: str, limit: int) -> str:
@@ -294,11 +327,13 @@ def word_count(segments: list) -> int:
     return sum(len(s["text"].split()) for s in segments)
 
 
-def add_segment(text: str, speaker: str = "", source: str = "dictado") -> None:
+def add_segment(text: str, speaker: str = "", source: str = "dictado",
+                speaker_id: str = "") -> None:
     text = (text or "").strip()
     if text:
         ss.meeting["transcript"].append(
-            {"t": time.time(), "speaker": speaker, "text": text, "src": source})
+            {"t": time.time(), "speaker": speaker, "text": text, "src": source,
+             "speaker_id": speaker_id})
 
 
 def add_card(card: dict, model: str = "", sources: list | None = None, batch: str = "") -> dict:
@@ -310,12 +345,25 @@ def add_card(card: dict, model: str = "", sources: list | None = None, batch: st
     return card
 
 
+VOICE_CHOICES = {"mujer": "Mujer (México)", "hombre": "Hombre (México)",
+                 "navegador": "Voz del navegador (básica)"}
+
+
 def say(text: str) -> None:
-    """Encola un texto para que el componente lo lea en voz alta."""
-    text = strip_markdown(text)
-    if text:
-        ss.speak_n += 1
-        ss.speak = {"id": ss.speak_n, "text": " ".join(text.split()[:70]), "ts": time.time()}
+    """Encola un texto para que el componente lo lea en voz alta (voz natural si se puede)."""
+    text = " ".join(strip_markdown(text).split()[:70])
+    if not text:
+        return
+    ss.speak_n += 1
+    item = {"id": ss.speak_n, "text": text, "ts": time.time()}
+    voice = ss.get("cfg_voice", "mujer")
+    if voice in tts.VOICES:
+        speed = 0.92 if ss.get("cfg_output") == "audifonos" else 1.0
+        result = tts.synthesize(text, voice, speed)
+        if result:
+            item["audio"] = base64.b64encode(result[0]).decode("ascii")
+            item["mime"] = result[1]
+    ss.speak = item
 
 
 def current_config(user: dict) -> SessionConfig:
@@ -395,7 +443,8 @@ def submit_audio_chunk(rt: dict, chunk: dict) -> None:
         out = engine.analyze_live(cfg, doc_parts=docs, previous_text=previous, audio=audio,
                                   audio_mime=mime, audio_seconds=seconds, screenshot=shot,
                                   **context)
-        out.update(kind="live", from_audio=True, meeting_id=meeting_id, keep_cards=keep_cards)
+        out.update(kind="live", from_audio=True, meeting_id=meeting_id, keep_cards=keep_cards,
+                   audio=audio if mime == "audio/wav" else b"")
         return out
 
     ss.worker.submit(JOB_AUDIO, job)
@@ -451,8 +500,15 @@ def process_results(verbal: bool) -> None:
         if kind == "live":
             if result.get("from_audio"):
                 caught_up = meeting["analyzed"] == len(meeting["transcript"])
+                mapping = {}
+                if result.get("audio") and result["segments"] and voices.available():
+                    mapping = voices.identify_chunk(result["audio"], result["segments"],
+                                                    meeting.setdefault("speakers", {}),
+                                                    known_voices())
                 for seg in result["segments"]:
-                    add_segment(seg["text"], seg.get("speaker", ""), "audio")
+                    label = seg.get("speaker", "")
+                    add_segment(seg["text"], label if not mapping else "", "audio",
+                                speaker_id=mapping.get(label or "Hablante", ""))
                 if caught_up:
                     meeting["analyzed"] = len(meeting["transcript"])
             else:
@@ -489,6 +545,7 @@ def complete_login(user: dict, settings: dict, remember: bool) -> None:
     ss.session_token = db.issue_session_token(user["username"]) if remember else ""
     ss.cookie_action = "set" if remember else "clear"
     ss.resume_offer = find_unfinished_meeting(user["username"])
+    ss.known_voices = None
 
 
 def find_unfinished_meeting(username: str) -> dict | None:
@@ -611,7 +668,7 @@ def login_screen(store, settings: dict) -> None:
 def logout() -> None:
     autosave_meeting(force=True)
     for key in ("user", "api_key", "meeting", "worker", "cap", "speak", "history", "last_error",
-                "plan_msg", "gen_key", "session_token", "resume_offer"):
+                "plan_msg", "gen_key", "session_token", "resume_offer", "known_voices"):
         ss.pop(key, None)
     ss.logged_out = True          # no volver a entrar solo con la cookie
     ss.cookie_action = "clear"
@@ -690,6 +747,54 @@ def plan_panel(user: dict, settings: dict) -> None:
         (st.success if ("activo" in message or "confirmado" in message) else st.info)(message)
 
 
+def my_voice_panel(user: dict) -> None:
+    if not voices.available():
+        return
+    saved = known_voices()
+    owner = next((v for v in saved if v.get("is_owner")), None)
+    with st.expander("Mi voz y voces guardadas", icon=":material/record_voice_over:"):
+        if ss.get("voices_error"):
+            st.warning("Las voces no se pueden guardar en la base (%s). Ejecuta "
+                       "supabase_schema.sql." % ss.voices_error, icon=":material/database:")
+        st.caption("Registra tu voz para que la transcripción muestre tu nombre y el agente "
+                   "sepa cuándo hablas tú.")
+        ss.setdefault("owner_name", owner["name"] if owner else owner_display_name(user))
+        st.text_input("Tu nombre", key="owner_name")
+        st.caption("Lee en voz alta durante unos 10 segundos: «Hoy revisamos los avances del "
+                   "proyecto, los acuerdos pendientes y los próximos pasos del equipo».")
+        sample = st.audio_input("Grabar mi voz", key="owner_sample", label_visibility="collapsed")
+        consent = st.checkbox("Acepto que se guarde mi huella de voz (dato biométrico) para "
+                              "identificarme. Puedo borrarla cuando quiera.", key="voice_consent")
+        if st.button("Guardar mi voz", icon=":material/save:", width="stretch",
+                     disabled=not (sample and consent)):
+            samples = voices.read_wav(sample.getvalue())
+            vector = voices.embed(samples) if samples is not None else None
+            if vector is None:
+                st.error("La grabación es muy corta o no se pudo procesar. Graba al menos 5 "
+                         "segundos hablando con normalidad.")
+            else:
+                try:
+                    db.get_store().save_voice(user["username"], owner["id"] if owner else
+                                              uuid.uuid4().hex[:12],
+                                              ss.owner_name.strip() or owner_display_name(user),
+                                              vector, True)
+                    ss.known_voices = None
+                    st.success("Tu voz quedó registrada.")
+                except Exception as exc:  # noqa: BLE001
+                    st.error("No se pudo guardar: %s" % str(exc)[:140])
+        if saved:
+            st.markdown("**Voces guardadas**")
+            for voice in saved:
+                name_col, del_col = st.columns([4, 1], vertical_alignment="center")
+                name_col.markdown("%s%s" % (md_escape(voice["name"]),
+                                            " :gray[(tú)]" if voice.get("is_owner") else ""))
+                if del_col.button("", icon=":material/delete:", key="delv_%s" % voice["id"],
+                                  help="Borrar esta voz"):
+                    db.get_store().delete_voice(user["username"], voice["id"])
+                    ss.known_voices = None
+                    st.rerun()
+
+
 def password_panel(user: dict) -> None:
     with st.expander("Cambiar contraseña", icon=":material/lock:"):
         with st.form("pwd_form", clear_on_submit=True, border=False):
@@ -707,6 +812,33 @@ def password_panel(user: dict) -> None:
                         ss.session_token = db.issue_session_token(user["username"])
 
 
+def voice_panel() -> None:
+    natural = tts.available()
+    options = list(VOICE_CHOICES) if natural else ["navegador"]
+    if ss.get("cfg_voice") not in options:
+        ss.cfg_voice = options[0]
+    st.selectbox("Voz", options, format_func=VOICE_CHOICES.get, key="cfg_voice",
+                         help="Voces naturales gratuitas (Piper, código abierto). La primera vez "
+                              "tardan unos segundos en descargarse.")
+    voice = ss.cfg_voice
+    if voice in tts.VOICES:
+        tts.preload(voice)
+    if st.button("Escuchar muestra", icon=":material/volume_up:", key="voice_test", width="stretch"):
+        sample = ("Hola, soy tu agente proactivo. Te avisaré qué responder y qué tareas "
+                  "quedaron durante la reunión.")
+        result = tts.synthesize(sample, voice, 0.92 if ss.get("cfg_output") == "audifonos" else 1.0) \
+            if voice in tts.VOICES else None
+        if result:
+            st.audio(result[0], format=result[1], autoplay=True)
+        elif voice in tts.VOICES:
+            st.caption(":material/error: No se pudo generar la voz natural (%s); se usará la del "
+                       "navegador." % (tts.last_error(voice) or "sin detalle"))
+        else:
+            st.caption("La voz del navegador se escucha al iniciar la captura en «En vivo».")
+    if not natural:
+        st.caption("Voces naturales no disponibles en este servidor; se usa la del navegador.")
+
+
 def sidebar(user: dict, store, engine, settings: dict) -> None:
     with st.sidebar:
         plan_panel(user, settings)
@@ -717,6 +849,8 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
         st.selectbox("Cómo te asiste", list(OUTPUTS), format_func=OUTPUTS.get, key="cfg_output",
                      help="La voz se activa al iniciar la captura en la pestaña «En vivo». "
                           "Pausa o reanuda con la barra espaciadora o un toque.")
+        if ss.get("cfg_output", "escrito") != "escrito":
+            voice_panel()
         st.pills("Sugerencias que quieres ver", list(CARD_ORDER), selection_mode="multi",
                  key="cfg_types", default=list(CARD_ORDER),
                  format_func=lambda t: CARDS[t][1],
@@ -757,6 +891,7 @@ def sidebar(user: dict, store, engine, settings: dict) -> None:
             st.warning("Hay pendientes de seguridad: revisa la pestaña «Administración».",
                        icon=":material/shield:")
         st.divider()
+        my_voice_panel(user)
         password_panel(user)
         st.button("Cerrar sesión", on_click=logout, width="stretch", icon=":material/logout:")
 
@@ -922,6 +1057,91 @@ def suggestions_panel(meeting: dict) -> None:
                "El botón **Pantalla completa** está arriba del carrusel (Esc para salir).")
 
 
+def rename_speaker(sid: str) -> None:
+    speaker = ss.meeting["speakers"].get(sid)
+    name = str(ss.get("spk_%s" % sid, "")).strip()
+    if not speaker or not name:
+        return
+    speaker["name"] = name
+    if speaker.get("voice_id"):          # persona guardada: también se renombra en la base
+        try:
+            db.get_store().save_voice(ss.user["username"], speaker["voice_id"], name,
+                                      speaker["emb"], speaker.get("kind") == "tú")
+            ss.known_voices = None
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def remember_speaker(sid: str, as_owner: bool = False) -> None:
+    speaker = ss.meeting["speakers"].get(sid)
+    if not speaker:
+        return
+    if as_owner:   # solo puede haber una voz «tú»
+        for other in ss.meeting["speakers"].values():
+            if other is not speaker and other.get("kind") == "tú":
+                other["kind"] = "nuevo"
+        speaker["name"] = ss.get("owner_name") or owner_display_name(ss.user)
+        for voice in known_voices():
+            if voice.get("is_owner"):
+                speaker["voice_id"] = voice["id"]
+    voice_id = speaker.get("voice_id") or uuid.uuid4().hex[:12]
+    try:
+        db.get_store().save_voice(ss.user["username"], voice_id, speaker["name"], speaker["emb"],
+                                  as_owner)
+    except Exception as exc:  # noqa: BLE001
+        ss.voice_msg = (False, "No se pudo guardar la voz (%s). Si usas Supabase, ejecuta "
+                               "supabase_schema.sql." % str(exc)[:120])
+        return
+    speaker.update(voice_id=voice_id, kind="tú" if as_owner else "conocido")
+    ss.known_voices = None
+    ss.voice_msg = (True, "Listo: reconoceré a %s en tus próximas reuniones." % speaker["name"])
+
+
+def participants_panel(meeting: dict, mode: str) -> None:
+    speakers = meeting.get("speakers") or {}
+    if mode != "audio":
+        if not speakers:
+            st.caption(":material/record_voice_over: Para saber **quién** habla, usa "
+                       "**Audio con Gemini**: el dictado del navegador no distingue voces.")
+        return
+    if not voices.available():
+        st.caption(":material/info: La identificación de voces no está disponible en este "
+                   "servidor.")
+        return
+    voices.preload()
+    message = ss.pop("voice_msg", None)
+    if message:
+        (st.success if message[0] else st.error)(message[1])
+    if not speakers:
+        st.caption(":material/record_voice_over: Las voces aparecerán aquí como Persona 1, "
+                   "Persona 2… para que les pongas nombre.")
+        return
+    with st.expander("Participantes (%d)" % len(speakers), icon=":material/groups:",
+                     expanded=any(s.get("kind") == "nuevo" for s in speakers.values())):
+        owner_known = any(v.get("is_owner") for v in known_voices())
+        for sid, speaker in speakers.items():
+            name_col, act_col = st.columns([3, 2], vertical_alignment="bottom")
+            key = "spk_%s" % sid
+            if key not in ss:
+                ss[key] = speaker["name"]
+            name_col.text_input("Nombre", key=key, on_change=rename_speaker, args=(sid,),
+                                label_visibility="collapsed")
+            kind = speaker.get("kind")
+            if kind == "tú":
+                act_col.caption(":material/person: Eres tú")
+            elif kind == "conocido":
+                act_col.caption(":material/how_to_reg: Voz guardada")
+            else:
+                with act_col.popover("Guardar", icon=":material/save:", width="stretch"):
+                    st.caption("Guarda su huella de voz para reconocerla en próximas reuniones. "
+                               "Es un dato biométrico: hazlo solo con su consentimiento.")
+                    st.button("Recordar a esta persona", key="rem_%s" % sid, width="stretch",
+                              on_click=remember_speaker, args=(sid,))
+                    if not owner_known:
+                        st.button("Es mi voz", key="own_%s" % sid, width="stretch",
+                                  on_click=remember_speaker, args=(sid, True))
+
+
 def live_view() -> None:
     rt, meeting, worker, cap = ss.rt, ss.meeting, ss.worker, ss.cap
     engine, cfg = rt["engine"], rt["cfg"]
@@ -989,10 +1209,11 @@ def live_view() -> None:
             else:
                 lines = []
                 for seg in reversed(meeting["transcript"][-80:]):
-                    who = seg["speaker"] or SRC_LABEL.get(seg["src"], "")
+                    who = speaker_label(seg)
                     lines.append(":gray[%s · %s]  \n%s" % (fmt_time(seg["t"]), md_escape(who),
                                                           md_escape(seg["text"])))
                 st.markdown("\n\n".join(lines))
+        participants_panel(meeting, mode)
         with st.expander("Escribir o pegar texto", icon=":material/edit_note:"):
             with st.form("manual_form", clear_on_submit=True, border=False):
                 note = st.text_area("Texto", height=90, label_visibility="collapsed",
@@ -1054,6 +1275,7 @@ def meeting_payload(cfg: SessionConfig, minutes: dict | None) -> dict:
     meeting = ss.meeting
     return {"started_at": meeting["started_at"], "transcript": meeting["transcript"],
             "cards": meeting["cards"], "minutes": minutes,
+            "speakers": meeting.get("speakers") or {},
             "config": {"title": cfg.title, "mode": cfg.mode, "focus": cfg.focus,
                        "context": cfg.context, "custom": cfg.custom, "agenda": cfg.agenda}}
 
@@ -1090,7 +1312,8 @@ def resume_meeting(meeting_id: str) -> None:
     data = record.get("data") or {}
     meeting = new_meeting()
     meeting.update(id=record["id"], started_at=data.get("started_at") or meeting["started_at"],
-                   transcript=data.get("transcript") or [], cards=data.get("cards") or [])
+                   transcript=data.get("transcript") or [], cards=data.get("cards") or [],
+                   speakers=data.get("speakers") or {})
     meeting["analyzed"] = len(meeting["transcript"])
     meeting["draft_sig"] = (len(meeting["transcript"]), len(meeting["cards"]))
     meeting["draft_at"] = time.time()
@@ -1111,10 +1334,13 @@ def dismiss_resume() -> None:
 
 
 def resume_banner() -> None:
+    # El contenedor existe siempre: si aparece o desaparece, Streamlit recrea las pestañas
+    # de abajo y te regresa a «Preparar» a media reunión.
+    slot = st.container()
     offer = ss.get("resume_offer")
     if not offer or ss.meeting["transcript"] or ss.meeting["cards"]:
         return
-    with st.container(border=True):
+    with slot.container(border=True):
         text, go_col, no_col = st.columns([5, 1.6, 1.2], vertical_alignment="center")
         text.markdown(":material/history: Tienes una reunión sin terminar: **%s** "
                       "(guardada a las %s). ¿Quieres continuarla?"
@@ -1432,8 +1658,9 @@ chips = [MODES[cfg.mode], OUTPUTS[cfg.output], cfg.focus,
 st.markdown("<div class='meeting-title'>%s</div>" % _html.escape(cfg.title or "Nueva reunión"),
             unsafe_allow_html=True)
 badges(chips, key="header_badges")
+notice = st.container()   # siempre presente, para no reiniciar las pestañas
 if not sources_on:
-    st.warning("Activa al menos una fuente de información en el panel izquierdo.")
+    notice.warning("Activa al menos una fuente de información en el panel izquierdo.")
 
 resume_banner()
 tab_names = [":material/tune: Preparar", ":material/graphic_eq: En vivo",

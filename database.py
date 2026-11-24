@@ -197,6 +197,21 @@ class SupabaseStore:
             .not_.like("title", DRAFT_PREFIX + "%").execute()
         return int(result.count or 0)
 
+    # voces guardadas (huellas de voz)
+    def list_voices(self, username: str) -> List[Dict[str, Any]]:
+        rows = self.client.table("voices").select("id,name,embedding,is_owner") \
+            .eq("username", username).order("name").execute().data
+        return [_voice_row(r) for r in rows]
+
+    def save_voice(self, username: str, voice_id: str, name: str, embedding: List[float],
+                   is_owner: bool = False) -> None:
+        self.client.table("voices").upsert({
+            "id": voice_id, "username": username, "name": name, "embedding": embedding,
+            "is_owner": is_owner, "updated_at": now_iso()}).execute()
+
+    def delete_voice(self, username: str, voice_id: str) -> None:
+        self.client.table("voices").delete().eq("username", username).eq("id", voice_id).execute()
+
     # administración
     def list_users(self) -> List[Dict[str, Any]]:
         # select("*") tolera columnas que aún no existan; los secretos se quitan abajo.
@@ -232,6 +247,10 @@ class LocalStore:
                 "title text default '', created_at text, updated_at text, data text)")
             self._db.execute(
                 "create table if not exists app_settings (key text primary key, value text, "
+                "updated_at text)")
+            self._db.execute(
+                "create table if not exists voices (id text primary key, username text not null, "
+                "name text not null, embedding text not null, is_owner integer default 0, "
                 "updated_at text)")
             existing = {r[1] for r in self._db.execute("pragma table_info(users)").fetchall()}
             for column in ("plan_source", "stripe_customer_id"):
@@ -295,6 +314,27 @@ class LocalStore:
                         (username, since_iso, DRAFT_PREFIX + "%"))
         return int(row["n"]) if row else 0
 
+    def list_voices(self, username: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute("select id, name, embedding, is_owner from voices where "
+                                    "username = ? order by name", (username,)).fetchall()
+        return [_voice_row(dict(r)) for r in rows]
+
+    def save_voice(self, username: str, voice_id: str, name: str, embedding: List[float],
+                   is_owner: bool = False) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "insert into voices (id, username, name, embedding, is_owner, updated_at) "
+                "values (?, ?, ?, ?, ?, ?) on conflict(id) do update set name = excluded.name, "
+                "embedding = excluded.embedding, is_owner = excluded.is_owner, "
+                "updated_at = excluded.updated_at",
+                (voice_id, username, name, json.dumps(embedding), int(is_owner), now_iso()))
+
+    def delete_voice(self, username: str, voice_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("delete from voices where username = ? and id = ?",
+                             (username, voice_id))
+
     def list_users(self) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self._db.execute("select * from users order by username").fetchall()
@@ -311,6 +351,14 @@ class LocalStore:
                 "insert into app_settings (key, value, updated_at) values (?, ?, ?) "
                 "on conflict(key) do update set value = excluded.value, "
                 "updated_at = excluded.updated_at", (key, json.dumps(value), now_iso()))
+
+
+def _voice_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    embedding = row.get("embedding")
+    if isinstance(embedding, str):
+        embedding = json.loads(embedding)
+    return {"id": row["id"], "name": row.get("name") or "", "embedding": embedding or [],
+            "is_owner": bool(row.get("is_owner"))}
 
 
 USER_FIELDS = ("password_hash", "api_key", "plan", "plan_source", "stripe_customer_id")
